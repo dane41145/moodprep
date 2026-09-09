@@ -10,12 +10,12 @@ MoodPrep is a local-first desktop workbench for preparing image collections befo
 - Recommends a keeper using resolution, detail, and compression signals.
 - Prefers the unsuffixed filename over names ending in `(1)`, `(2)`, and so on when files are byte-identical.
 - Deletes confirmed exact copies from the source folder by moving them to the operating system Trash after re-verifying their hashes.
-- Converts SVG sources to 2048 px PNG during export.
+- Converts SVG sources to 2048 px PNG during intake, at a render density derived from each file's own size.
 - Applies non-destructive crop, border trim, centering, background flattening, resize, and format conversion.
 - Constrains the crop frame to a perfect square with a 1:1 lock, correct on any source aspect ratio.
 - Supports multi-label review for texture, perspective, background, watermark, quality, border, crop, and centering issues.
-- Sends only explicitly requested reconstruction jobs to Gemini.
-- Accepted edits replace the image in place; the previous file is kept in `moodprep-originals`.
+- Sends only explicitly requested reconstruction jobs to an image model: Gemini (Flash Lite, Flash, Pro) or Alibaba's Qwen Image, chosen per job.
+- Accepted edits replace the image in place; the previous file is kept in `moodprep-originals`, and the save can be undone from the toast.
 - Presents the whole collection on one library screen, sorted by name, date added, date modified, file size, dimensions, quality, or file type.
 
 ## The interface
@@ -43,7 +43,7 @@ Build and package for Apple Silicon macOS:
 npm run package:mac
 ```
 
-The packaged DMG and ZIP are written to `dist/`.
+The packaged DMG and ZIP are written to `release/`. For day-to-day use, `npm run app` rebuilds, installs to `/Applications/MoodPrep.app` and relaunches it.
 
 ## Project data
 
@@ -51,22 +51,21 @@ After opening an image folder, MoodPrep creates local working data:
 
 ```text
 .moodprep/
-  project.json
-  previews/
-  ai-cache/
-moodboard-ready/
-  manifest.json
+  project.json      decisions and issue tags
+  scan-cache.json   per-file analysis, keyed by size and mtime
+  previews/         scratch revisions, pruned automatically
+moodprep-originals/ every file that was replaced
 ```
 
 Files in `previews/` are scratch: they are removed after each scan and whenever the workbench closes, unless the project still refers to one.
 
 Original image files are read-only during scanning and processing. Excluding an image changes only the project decision. The explicit **Delete confirmed copies** action is the sole exception: after confirmation, it re-verifies every exact copy against the chosen keeper and moves it to the operating system Trash. Processed previews and exports are new files.
 
-## Gemini key security
+## API key security
 
-Enter the Gemini key in Settings. Electron encrypts it through the operating system credential service and stores the encrypted value in the application data directory, not the image folder. The renderer never reads the stored key. Gemini calls originate from the desktop process only when the user starts a reconstruction.
+Enter the Gemini or Qwen key in Settings. Electron encrypts it through the operating system credential service and stores the encrypted value in the application data directory, not the image folder. The renderer never reads the stored key. Gemini calls originate from the desktop process only when the user starts a reconstruction.
 
-The key can alternatively be supplied as `GEMINI_API_KEY` in the launch environment. Do not commit secrets to this repository.
+The keys can alternatively be supplied as `GEMINI_API_KEY` and `DASHSCOPE_API_KEY` in the launch environment; Qwen also takes `DASHSCOPE_WORKSPACE` and `DASHSCOPE_REGION`. Do not commit secrets to this repository.
 
 ## Verification
 
@@ -76,4 +75,8 @@ npm run build
 npm audit --omit=dev
 ```
 
-The tests cover exact and perceptual matching, distinct-image exemptions, SVG scanning, deterministic processing, source preservation, SVG export, and manifest generation.
+The tests cover duplicate matching, SVG intake, the scan cache, every deterministic image operation, source preservation and undo, preview pruning, and the prompt and model-selection rules.
+
+## Working on it
+
+`AGENTS.md` and `memory.md` are the product record: `memory.md` lists every behaviour the app has committed to and why, and any change is expected to read it first and keep those behaviours. Pure image algorithms live in `shared/` and are used by both the Electron process and the renderer.
