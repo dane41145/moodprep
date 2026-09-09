@@ -313,6 +313,9 @@ export type MoodPrepApi = {
   fillArea: (request: FillRequest) => Promise<ProcessResult>
   detectPalette: (imagePath: string) => Promise<PaletteAnalysisResult>
   detectDominantColors: (imagePath: string, count?: number) => Promise<string[]>
+  // Deletes every preview not named in `keep`. Previews are scratch files, so
+  // this runs after a scan and when the workbench closes.
+  prunePreviews: (folder: string, keep: string[]) => Promise<{ removed: number; bytes: number }>
   loadEditorPreview: (imagePath: string) => Promise<EditorPreviewResult>
   commitProcessedImage: (folder: string, sourcePath: string, previewPath: string) => Promise<CommitResult>
   revertCommittedImage: (folder: string, sourcePath: string, backupPath: string) => Promise<RevertResult>

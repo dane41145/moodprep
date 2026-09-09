@@ -17,6 +17,7 @@ const api: MoodPrepApi = {
   detectDominantColors: (imagePath, count) => ipcRenderer.invoke('detect-dominant-colors', imagePath, count),
   samplePixel: (imagePath, x, y) => ipcRenderer.invoke('sample-pixel', imagePath, x, y),
   fillArea: (request: FillRequest) => ipcRenderer.invoke('fill-area', request),
+  prunePreviews: (folder, keep) => ipcRenderer.invoke('prune-previews', folder, keep),
   loadEditorPreview: (imagePath) => ipcRenderer.invoke('load-editor-preview', imagePath),
   commitProcessedImage: (folder, sourcePath, previewPath) => ipcRenderer.invoke('commit-processed-image', folder, sourcePath, previewPath),
   revertCommittedImage: (folder, sourcePath, backupPath) => ipcRenderer.invoke('revert-committed-image', folder, sourcePath, backupPath),

@@ -266,6 +266,7 @@ export default function App() {
       setScan(result)
       setDecisions(nextDecisions)
       setSvgFailures(conversion.failed)
+      void prunePreviews(folder, nextDecisions)
       const conversionNote = conversion.convertedCount
         ? ` Converted ${conversion.convertedCount} SVG ${conversion.convertedCount === 1 ? 'file' : 'files'} to PNG; the SVG ${conversion.convertedCount === 1 ? 'is' : 'files are'} in moodprep-originals.`
         : ''
@@ -282,6 +283,13 @@ export default function App() {
       setBusy(null)
     }
   }
+
+  // Previews are scratch: each revision writes one, a commit re-encodes the
+  // chosen one into the source, and nothing points at the rest. They are
+  // cleared after a scan and whenever the workbench closes, keeping only what
+  // the project still names, so the folder no longer grows by the gigabyte.
+  const prunePreviews = (folder: string, current: Record<string, ImageDecision>) =>
+    window.moodprep.prunePreviews(folder, Object.values(current).map((decision) => decision.outputPath ?? '').filter(Boolean)).catch(() => undefined)
 
   const updateDecision = (imageId: string, update: Partial<ImageDecision>) => {
     setDecisions((current) => ({ ...current, [imageId]: { ...current[imageId], ...update } }))
@@ -522,6 +530,7 @@ export default function App() {
         onDeleted={removeDeletedImage}
         onDeletedMany={removeDeletedImages}
         onDuplicated={duplicateImage}
+        onEditorClosed={() => void prunePreviews(scan.folder, decisions)}
       />
 
       {duplicatesTab && <DuplicatesDialog tab={duplicatesTab} setTab={setDuplicatesTab} exactGroups={exactGroups} nearGroups={nearGroups} decisions={decisions} chooseKeeper={chooseKeeper} updateDecision={updateDecision} onDelete={deleteConfirmedDuplicates} onClose={() => setDuplicatesTab(null)} />}
@@ -691,7 +700,7 @@ function DuplicatesDialog({ tab, setTab, exactGroups, nearGroups, decisions, cho
   )
 }
 
-function LibraryView({ scan, decisions, excluded, updateDecision, refreshingPaths, keyStatus, openSettings, exactCopies, nearGroupCount, openDuplicates, onNotice, onBusy, onCommitted, onReverted, onDeleted, onDeletedMany, onDuplicated }: {
+function LibraryView({ scan, decisions, excluded, updateDecision, refreshingPaths, keyStatus, openSettings, exactCopies, nearGroupCount, openDuplicates, onNotice, onBusy, onCommitted, onReverted, onDeleted, onDeletedMany, onDuplicated, onEditorClosed }: {
   scan: ScanResult
   decisions: Record<string, ImageDecision>
   excluded: number
@@ -709,6 +718,7 @@ function LibraryView({ scan, decisions, excluded, updateDecision, refreshingPath
   onDeleted: (image: ImageRecord) => void
   onDeletedMany: (images: ImageRecord[]) => void
   onDuplicated: (image: ImageRecord) => void
+  onEditorClosed: () => void
 }) {
   const [search, setSearch] = useState('')
   const [issueFilter, setIssueFilter] = useState<IssueType | 'all'>('all')
@@ -1001,7 +1011,7 @@ function LibraryView({ scan, decisions, excluded, updateDecision, refreshingPath
           return next
         })
         onDeleted(image)
-      }} onDuplicated={onDuplicated} onClose={() => setEditing(null)} />}
+      }} onDuplicated={onDuplicated} onClose={() => { setEditing(null); onEditorClosed() }} />}
     </main>
   )
 }

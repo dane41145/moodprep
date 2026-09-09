@@ -58,6 +58,8 @@ moodboard-ready/
   manifest.json
 ```
 
+Files in `previews/` are scratch: they are removed after each scan and whenever the workbench closes, unless the project still refers to one.
+
 Original image files are read-only during scanning and processing. Excluding an image changes only the project decision. The explicit **Delete confirmed copies** action is the sole exception: after confirmation, it re-verifies every exact copy against the chosen keeper and moves it to the operating system Trash. Processed previews and exports are new files.
 
 ## Gemini key security

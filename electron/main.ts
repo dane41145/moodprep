@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { AuthoredPromptRequest, DuplicateDeletionGroup, ExportEntry, FillRequest, GeminiRequest, ProcessRequest, ProjectState } from '../shared/types'
-import { analyzeImageQuality, authorPrompt, commitProcessedImage, revertCommittedImage, convertSvgs, detectBackgroundColor, detectDominantColors, detectPalette, detectRotation, duplicateImage, fillArea, exportSelection, aiEdit, loadEditorPreview, loadProject, processImage, refreshImage, samplePixelColor, saveProject, scanFolder, testConnection } from './processor'
+import { analyzeImageQuality, authorPrompt, commitProcessedImage, revertCommittedImage, convertSvgs, detectBackgroundColor, detectDominantColors, detectPalette, detectRotation, duplicateImage, fillArea, exportSelection, aiEdit, loadEditorPreview, loadProject, processImage, prunePreviews, refreshImage, samplePixelColor, saveProject, scanFolder, testConnection } from './processor'
 import { AI_MODELS, DEFAULT_QWEN_REGION, modelById, normaliseQwenWorkspace, QWEN_REGIONS, type AiProvider, type QwenRegion } from '../shared/models'
 
 const currentDirectory = path.dirname(fileURLToPath(import.meta.url))
@@ -113,6 +113,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('detect-dominant-colors', (_event, imagePath: string, count?: number) => detectDominantColors(imagePath, count))
   ipcMain.handle('sample-pixel', (_event, imagePath: string, x: number, y: number) => samplePixelColor(imagePath, x, y))
   ipcMain.handle('fill-area', (_event, request: FillRequest) => fillArea(request))
+  ipcMain.handle('prune-previews', (_event, folder: string, keep: string[]) => prunePreviews(folder, keep))
   ipcMain.handle('load-editor-preview', (_event, imagePath: string) => loadEditorPreview(imagePath))
   ipcMain.handle('commit-processed-image', (_event, folder: string, sourcePath: string, previewPath: string) => commitProcessedImage(folder, sourcePath, previewPath))
   ipcMain.handle('revert-committed-image', (_event, folder: string, sourcePath: string, backupPath: string) => revertCommittedImage(folder, sourcePath, backupPath))
