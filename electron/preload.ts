@@ -1,0 +1,39 @@
+import { clipboard, contextBridge, ipcRenderer } from 'electron'
+import type { FillRequest, GeminiRequest, MoodPrepApi, ProcessRequest, ProjectState, ExportEntry, DuplicateDeletionGroup } from '../shared/types'
+
+const api: MoodPrepApi = {
+  selectFolder: () => ipcRenderer.invoke('select-folder'),
+  scanFolder: (folder, recursive) => ipcRenderer.invoke('scan-folder', folder, recursive),
+  refreshImage: (folder, imagePath) => ipcRenderer.invoke('refresh-image', folder, imagePath),
+  duplicateImage: (folder, imagePath) => ipcRenderer.invoke('duplicate-image', folder, imagePath),
+  convertSvgs: (folder, recursive) => ipcRenderer.invoke('convert-svgs', folder, recursive),
+  loadProject: (folder) => ipcRenderer.invoke('load-project', folder),
+  saveProject: (state: ProjectState) => ipcRenderer.invoke('save-project', state),
+  processImage: (request: ProcessRequest) => ipcRenderer.invoke('process-image', request),
+  analyzeQuality: (imagePath) => ipcRenderer.invoke('analyze-quality', imagePath),
+  detectBackground: (imagePath) => ipcRenderer.invoke('detect-background', imagePath),
+  detectRotation: (imagePath) => ipcRenderer.invoke('detect-rotation', imagePath),
+  detectPalette: (imagePath) => ipcRenderer.invoke('detect-palette', imagePath),
+  detectDominantColors: (imagePath, count) => ipcRenderer.invoke('detect-dominant-colors', imagePath, count),
+  samplePixel: (imagePath, x, y) => ipcRenderer.invoke('sample-pixel', imagePath, x, y),
+  fillArea: (request: FillRequest) => ipcRenderer.invoke('fill-area', request),
+  loadEditorPreview: (imagePath) => ipcRenderer.invoke('load-editor-preview', imagePath),
+  commitProcessedImage: (folder, sourcePath, previewPath) => ipcRenderer.invoke('commit-processed-image', folder, sourcePath, previewPath),
+  revertCommittedImage: (folder, sourcePath, backupPath) => ipcRenderer.invoke('revert-committed-image', folder, sourcePath, backupPath),
+  aiEdit: (request: GeminiRequest) => ipcRenderer.invoke('ai-edit', request),
+  authorPrompt: (request) => ipcRenderer.invoke('author-prompt', request),
+  saveApiKey: (provider, key) => ipcRenderer.invoke('save-api-key', provider, key),
+  apiKeyStatus: () => ipcRenderer.invoke('api-key-status'),
+  qwenAddress: () => ipcRenderer.invoke('qwen-address'),
+  saveQwenAddress: (address) => ipcRenderer.invoke('save-qwen-address', address),
+  clearApiKey: (provider) => ipcRenderer.invoke('clear-api-key', provider),
+  testApiKey: (provider) => ipcRenderer.invoke('test-api-key', provider),
+  deleteDuplicates: (folder: string, groups: DuplicateDeletionGroup[]) => ipcRenderer.invoke('delete-duplicates', folder, groups),
+  deleteImage: (folder, imagePath) => ipcRenderer.invoke('delete-image', folder, imagePath),
+  deleteImages: (folder, imagePaths) => ipcRenderer.invoke('delete-images', folder, imagePaths),
+  exportSelection: (folder: string, entries: ExportEntry[]) => ipcRenderer.invoke('export-selection', folder, entries),
+  revealPath: (target) => ipcRenderer.invoke('reveal-path', target),
+  copyText: async (text) => clipboard.writeText(text),
+}
+
+contextBridge.exposeInMainWorld('moodprep', api)
