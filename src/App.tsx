@@ -13,6 +13,7 @@ import {
   CopyPlus,
   Crop,
   Droplet,
+  Eye,
   FolderOpen,
   Image as ImageIcon,
   Images,
@@ -43,7 +44,7 @@ import {
 import { RECOLOUR_VARIATIONS } from '../shared/recolour'
 import { AI_BACKDROPS, AI_MODELS, backdropById, DEFAULT_AI_BACKDROP, DEFAULT_AI_MODEL, DEFAULT_QWEN_REGION, IMAGE_SIZES, modelById, modelForSize, modelsForSize, PROVIDER_LABELS, QWEN_REGIONS, type AiProvider, type QwenRegion } from '../shared/models'
 import { ISSUE_TYPES, KNOWN_CLEAN_WATERMARK_FILENAMES, type CropInsets, type ImageDecision, type ImageRecord, type IssueType, type Notice, type PaintBrushShape, type PaintPoint, type PaintStroke, type PaletteAnalysisResult, type ProcessRequest, type ProcessResult, type ProjectState, type ImageSize, type ScanResult, type SvgConversionResult } from '../shared/types'
-import { appendRevision, BORDER_DEFAULT, ROTATION_LIMIT, BORDER_MAX, BORDER_MIN, borderedSize, borderPixels, brushMaxPixels, clampBorder, bulkTagAction, bulkTagState, brushPixelsFromSize, brushPixelsFromSlider, brushSizeFromPixels, brushSliderPosition, BRUSH_MIN_PIXELS, BRUSH_SLIDER_STEPS, buildGeminiPrompt, buildGeminiPresetPrompt, buildPromptAuthorInstruction, cleanAuthoredPrompt, canAcceptQuality, cropPixelSize, describeSortValue, isTextEntryElement, undoRedoIntent, exactDuplicateGroups, formatBytes, GEMINI_PRESETS, humanIssue, naturalSortDirection, nearDuplicateGroups, normalizedPointInRect, normalizeHexColor, pointerOverVisibleImage, visibleImageRect, selectionRange, QUALITY_RECOMMENDED_SCORE, sortDirectionLabel, sortImages, SORT_OPTIONS, squareCropInsets, stageImageGeometry, stageViewFraction, stageViewOffset, type DuplicateGroup, type GeminiPresetId, type SortDirection, type SortKey } from './utils'
+import { appendRevision, peekRevision, BORDER_DEFAULT, ROTATION_LIMIT, BORDER_MAX, BORDER_MIN, borderedSize, borderPixels, brushMaxPixels, clampBorder, bulkTagAction, bulkTagState, brushPixelsFromSize, brushPixelsFromSlider, brushSizeFromPixels, brushSliderPosition, BRUSH_MIN_PIXELS, BRUSH_SLIDER_STEPS, buildGeminiPrompt, buildGeminiPresetPrompt, buildPromptAuthorInstruction, cleanAuthoredPrompt, canAcceptQuality, cropPixelSize, describeSortValue, isTextEntryElement, undoRedoIntent, exactDuplicateGroups, formatBytes, GEMINI_PRESETS, humanIssue, naturalSortDirection, nearDuplicateGroups, normalizedPointInRect, normalizeHexColor, pointerOverVisibleImage, visibleImageRect, selectionRange, QUALITY_RECOMMENDED_SCORE, sortDirectionLabel, sortImages, SORT_OPTIONS, squareCropInsets, stageImageGeometry, stageViewFraction, stageViewOffset, type DuplicateGroup, type GeminiPresetId, type SortDirection, type SortKey } from './utils'
 
 // The workflow used to be three wizard steps in a sidebar. Everything now
 // lives on one library screen; these quick filters are both the collection's
@@ -1617,13 +1618,32 @@ function EditorDialog({ image, decision, projectPath, keyStatus, openSettings, o
   const [deleting, setDeleting] = useState(false)
   const [filenameCopied, setFilenameCopied] = useState(false)
   const [qualityOverride, setQualityOverride] = useState(false)
-  const visibleResult = working
+  // Holding Before shows the previous revision without moving through the
+  // history: nothing is undone, the redo branch is untouched and no pending
+  // control is reset, so a result can be compared with what it replaced and
+  // then worked on as if the glance had never happened.
+  const [peeking, setPeeking] = useState(false)
+  const peekTarget = peekRevision(timeline.revisions, timeline.index, peeking)
+  const visibleResult = peekTarget ?? working
   useEffect(() => setQualityOverride(false), [working.outputPath])
   const [editorPreview, setEditorPreview] = useState<{ path: string; dataUrl: string } | null>(null)
+  // The last few previews are kept so flicking between a result and what came
+  // before it is instant rather than a round trip each way.
+  const previewCache = useRef(new Map<string, string>())
   useEffect(() => {
+    const target = visibleResult.outputPath
+    const cached = previewCache.current.get(target)
+    if (cached) {
+      setEditorPreview({ path: target, dataUrl: cached })
+      return
+    }
     let cancelled = false
-    window.moodprep.loadEditorPreview(visibleResult.outputPath)
-      .then((result) => { if (!cancelled) setEditorPreview({ path: visibleResult.outputPath, dataUrl: result.dataUrl }) })
+    window.moodprep.loadEditorPreview(target)
+      .then((result) => {
+        previewCache.current.set(target, result.dataUrl)
+        while (previewCache.current.size > 6) previewCache.current.delete(previewCache.current.keys().next().value!)
+        if (!cancelled) setEditorPreview({ path: target, dataUrl: result.dataUrl })
+      })
       .catch(() => undefined)
     return () => { cancelled = true }
   }, [visibleResult.outputPath])
@@ -2291,27 +2311,27 @@ function EditorDialog({ image, decision, projectPath, keyStatus, openSettings, o
         <header><div><span>Processing workbench</span><button type="button" className={`filename-copy ${filenameCopied ? 'copied' : ''}`} onClick={copyFilename} title="Copy full filename" aria-label={`Copy full filename: ${image.name}`}><strong>{image.name}</strong>{filenameCopied ? <><Check size={13} /><em>Copied</em></> : <><Copy size={13} /><em>Copy</em></>}</button></div><button className="icon-button" onClick={onClose}><X size={19} /></button></header>
         <div className="editor-body">
           <div className="comparison-stage">
-            <div className="compare-label">{timeline.index === 0 ? 'Original' : `Working revision ${timeline.index} of ${timeline.revisions.length - 1}`}</div>
+            <div className="compare-label">{peekTarget ? `Before · ${timeline.index - 1 === 0 ? 'original' : `revision ${timeline.index - 1}`}` : timeline.index === 0 ? 'Original' : `Working revision ${timeline.index} of ${timeline.revisions.length - 1}`}</div>
             <ImageStage
               image={{
                 name: image.name,
-                width: working.width,
-                height: working.height,
+                width: visibleResult.width,
+                height: visibleResult.height,
                 thumbnailDataUrl: editorPreview?.path === visibleResult.outputPath ? editorPreview.dataUrl : visibleResult.thumbnailDataUrl,
               }}
               crop={crop}
               onChange={setCrop}
               zoom={zoom}
-              rotation={stageRotation}
-              cropEnabled={activeTool === 'crop' && !rotationChanged}
+              rotation={peekTarget ? 0 : stageRotation}
+              cropEnabled={activeTool === 'crop' && !rotationChanged && !peekTarget}
               squareCrop={squareCrop}
-              paintEnabled={paintEnabled}
-              paintStrokes={paintStrokes}
+              paintEnabled={paintEnabled && !peekTarget}
+              paintStrokes={peekTarget ? [] : paintStrokes}
               paintColor={background}
               brushSize={brushSize}
               brushShape={brushShape}
               showLevelGrid={rotationChanged || straightening}
-              sampleMode={sampleMode}
+              sampleMode={peekTarget ? null : sampleMode}
               onSample={handleStageSample}
               onPaint={updatePaintStrokes}
               onStrokeEnd={() => void flushStrokes()}
@@ -2320,13 +2340,26 @@ function EditorDialog({ image, decision, projectPath, keyStatus, openSettings, o
               <button type="button" onClick={undoWorkbench} disabled={paintStrokes.length === 0 && timeline.index === 0} title="Undo (⌘Z)"><Undo2 size={13} /> Undo</button>
               <button type="button" onClick={redoWorkbench} disabled={paintRedoStrokes.length === 0 && timeline.index >= timeline.revisions.length - 1} title="Redo (⇧⌘Z)"><Redo2 size={13} /> Redo</button>
               <button type="button" onClick={returnToOriginal} disabled={paintStrokes.length === 0 && paintRedoStrokes.length === 0 && timeline.index === 0}><RotateCcw size={13} /> Return to original</button>
+              <button
+                type="button"
+                className={`peek ${peekTarget ? 'active' : ''}`}
+                disabled={timeline.index === 0}
+                onPointerDown={(event) => { event.preventDefault(); setPeeking(true) }}
+                onPointerUp={() => setPeeking(false)}
+                onPointerLeave={() => setPeeking(false)}
+                onPointerCancel={() => setPeeking(false)}
+                onKeyDown={(event) => { if (event.key === ' ' || event.key === 'Enter') { event.preventDefault(); setPeeking(true) } }}
+                onKeyUp={() => setPeeking(false)}
+                onBlur={() => setPeeking(false)}
+                title="Hold to see the previous revision without changing anything"
+              ><Eye size={13} /> Before</button>
             </div>
             <div className="stage-zoom-controls" aria-label="Preview zoom controls">
               <button type="button" onClick={() => setZoom((value) => Math.max(1, value - .25))} disabled={zoom <= 1} aria-label="Zoom out"><ZoomOut size={14} /></button>
               <button type="button" className="zoom-level" onClick={() => setZoom(1)} title="Fit image to window">{Math.round(zoom * 100)}%</button>
               <button type="button" onClick={() => setZoom((value) => Math.min(4, value + .25))} disabled={zoom >= 4} aria-label="Zoom in"><ZoomIn size={14} /></button>
             </div>
-            <div className="stage-meta"><span>{working.width} × {working.height}</span><span>{formatBytes(image.bytes)}</span><span>Quality {working.quality.score}/100</span></div>
+            <div className="stage-meta"><span>{visibleResult.width} × {visibleResult.height}</span><span>{formatBytes(image.bytes)}</span><span>Quality {visibleResult.quality.score}/100</span></div>
           </div>
           <div className="editor-controls">
             <section>

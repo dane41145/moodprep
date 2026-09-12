@@ -360,6 +360,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .revision-actions button { display: flex; align-items: center; gap: 4px; height: 28px; border: 0; background: transparent; color: #e3dfd7; border-radius: 4px; padding: 0 7px; font-size: 8px; cursor: pointer; }
 .revision-actions button:hover:not(:disabled) { background: rgba(255,255,255,.1); }
 .revision-actions button:disabled { color: #706c64; cursor: default; }
+/* Before is a hold, not a click: it lights while the previous revision is on
+   the stage and goes out the moment the button is released. */
+.revision-actions button.peek { margin-left: 3px; border-left: 1px solid rgba(255,255,255,.14); border-radius: 0 4px 4px 0; user-select: none; -webkit-user-select: none; touch-action: none; }
+.revision-actions button.peek.active { background: #e8f1eb; color: #26241f; }
 .editor-controls { overflow-y: auto; padding: 0 24px 30px; background: #faf9f6; }
 .editor-controls section { padding: 22px 0; border-bottom: 1px solid var(--line); }
 .control-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 13px; }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { appendRevision, areKnownDistinct, BORDER_DEFAULT, BORDER_MAX, BORDER_MIN, borderedSize, borderFromPixels, borderPixels, clampBorder, ROTATION_LIMIT, buildPromptAuthorInstruction, bulkTagAction, bulkTagState, cleanAuthoredPrompt, selectionRange, brushMaxPixels, brushPixelsFromSize, brushPixelsFromSlider, brushSizeFromPixels, brushSliderPosition, BRUSH_MIN_PIXELS, BRUSH_SLIDER_STEPS, buildGeminiPresetPrompt, canAcceptQuality, cropPixelSize, describeSortValue, exactDuplicateGroups, formatTimestamp, GEMINI_PRESETS, hammingHex, naturalSortDirection, nearDuplicateGroups, composeStageRotation, isTextEntryElement, normalizedPointInRect, normalizeHexColor, sortImages, squareCropInsets, pointerOverVisibleImage, stageImageGeometry, stageViewFraction, stageViewOffset, undoRedoIntent, visibleImageRect } from './utils'
+import { appendRevision, peekRevision, areKnownDistinct, BORDER_DEFAULT, BORDER_MAX, BORDER_MIN, borderedSize, borderFromPixels, borderPixels, clampBorder, ROTATION_LIMIT, buildPromptAuthorInstruction, bulkTagAction, bulkTagState, cleanAuthoredPrompt, selectionRange, brushMaxPixels, brushPixelsFromSize, brushPixelsFromSlider, brushSizeFromPixels, brushSliderPosition, BRUSH_MIN_PIXELS, BRUSH_SLIDER_STEPS, buildGeminiPresetPrompt, canAcceptQuality, cropPixelSize, describeSortValue, exactDuplicateGroups, formatTimestamp, GEMINI_PRESETS, hammingHex, naturalSortDirection, nearDuplicateGroups, composeStageRotation, isTextEntryElement, normalizedPointInRect, normalizeHexColor, sortImages, squareCropInsets, pointerOverVisibleImage, stageImageGeometry, stageViewFraction, stageViewOffset, undoRedoIntent, visibleImageRect } from './utils'
 import type { ImageRecord } from '../shared/types'
 import { modelForSize, modelsForSize } from '../shared/models'
 
@@ -1073,5 +1073,17 @@ describe('writing a prompt for one image', () => {
       expect(cleanAuthoredPrompt('"Remove the foxing."')).toBe('Remove the foxing.')
       expect(cleanAuthoredPrompt('Remove the foxing. Keep the "Spruce 4436" lettering exactly.')).toBe('Remove the foxing. Keep the "Spruce 4436" lettering exactly.')
     })
+  })
+})
+
+describe('peeking at the previous revision', () => {
+  const revisions = ['original', 'first', 'second']
+  it('shows the revision behind the working one while held', () => {
+    expect(peekRevision(revisions, 2, true)).toBe('first')
+    expect(peekRevision(revisions, 1, true)).toBe('original')
+  })
+  it('shows nothing when not held or when there is nothing behind', () => {
+    expect(peekRevision(revisions, 2, false)).toBeNull()
+    expect(peekRevision(revisions, 0, true)).toBeNull()
   })
 })

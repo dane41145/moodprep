@@ -616,6 +616,17 @@ export function normalizedPointInRect(
   }
 }
 
+// What the stage shows while the Before button is held: the revision just
+// behind the working one, and nothing at all when there is none. Looking at the
+// previous state is not a move through the history — the working revision, the
+// redo branch and every pending control stay exactly as they are — which is
+// what Undo and Redo cannot offer, since each of them reloads the preview and
+// resets the controls, and a direct tool used in between drops the redo branch.
+export function peekRevision<T>(revisions: T[], index: number, peeking: boolean): T | null {
+  if (!peeking || index <= 0) return null
+  return revisions[index - 1] ?? null
+}
+
 export function appendRevision<T>(revisions: T[], index: number, revision: T) {
   const next = [...revisions.slice(0, index + 1), revision]
   return { revisions: next, index: next.length - 1 }
