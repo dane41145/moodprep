@@ -50,7 +50,9 @@ if [ "$INSTALL" = "1" ]; then
     OUTGOING="$(defaults read "$INSTALLED/Contents/Info.plist" CFBundleShortVersionString)"
     PREVIOUS="$ROOT/release/MoodPrep-previous-$OUTGOING-installed.app"
     echo "==> Setting the outgoing $OUTGOING build aside as $(basename "$PREVIOUS")"
-    rm -rf "$PREVIOUS"
+    # Only the one outgoing build is kept. Keeping every one of them is how
+    # release/ reached 18 GB of 308 MB bundles by 2026-09-09.
+    rm -rf "$ROOT"/release/MoodPrep-previous-*.app
     mv "$INSTALLED" "$PREVIOUS"
   fi
   echo "==> Installing $VERSION to /Applications"
