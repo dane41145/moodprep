@@ -514,6 +514,22 @@ describe('even the border preset', () => {
     expect(prompt).toMatch(/same aspect ratio/i)
   })
 
+  it('moves the inner assembly as one rigid group and demands a self-check', () => {
+    // 2026-09-14: the Dominion Brewery roundel came back with its inner disc,
+    // rings and lettering exactly as off-centre as they went in. An abstract
+    // "one shape inside another" left the model to decide what moved, and the
+    // change-nothing language won. The prompt now says what the group is,
+    // that it moves as a unit, that the offset it arrived with is the failure,
+    // and that the bands must be measured before answering.
+    const prompt = buildGeminiPresetPrompt('concentric', [])
+    expect(prompt).toMatch(/treat EVERYTHING inside the outermost band/)
+    expect(prompt).toMatch(/one rigid group/i)
+    expect(prompt).toMatch(/nothing inside it may shift relative to anything else/i)
+    expect(prompt).toMatch(/must apply it before you answer/i)
+    expect(prompt).toMatch(/same offset it arrived with is the specific failure/i)
+    expect(prompt).toMatch(/move the group again and measure again/i)
+  })
+
   it('takes no backdrop and no issue instructions, like the other single-job presets', () => {
     const prompt = buildGeminiPresetPrompt('concentric', ['border', 'crop'], 'pure white, #ffffff')
     expect(prompt).not.toContain('pure white')
@@ -555,6 +571,10 @@ describe('photographed coaster preset', () => {
   it('demands one shared centre and equal ring widths, overriding fidelity', () => {
     const prompt = buildGeminiPresetPrompt('coaster', [])
     expect(prompt).toMatch(/concentricity and ring placement/i)
+    // The inner disc and everything printed on it move as one rigid group, and
+    // handing back the photographed offset is named as the failure.
+    expect(prompt).toMatch(/as one rigid group/i)
+    expect(prompt).toMatch(/same offset the photograph shows is a failure/i)
     expect(prompt).toMatch(/out of register/i)
     expect(prompt).toMatch(/one single common centre/i)
     expect(prompt).toMatch(/exactly the same width the whole way round/i)
