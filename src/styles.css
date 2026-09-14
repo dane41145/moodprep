@@ -600,6 +600,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
    select: it is the first thing to check when a key is rejected, so it should
    be readable without opening anything. */
 .region-field { margin-top: 20px; }
+.language-field { margin-bottom: 18px; }
+.language-field > span { display: block; font-size: 10px; font-weight: 700; }
 .region-field > span { display: block; font-size: 10px; font-weight: 700; }
 .region-choice { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 6px; }
 .region-choice button { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; border: 1px solid var(--line); border-radius: 6px; background: white; padding: 9px 11px; cursor: pointer; text-align: left; }

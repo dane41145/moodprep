@@ -28,6 +28,10 @@ MoodPrep is a single library screen rather than a numbered wizard:
 - **Duplicates** opens exact-copy and visual-match review over the grid, including keeper recommendations and the explicit delete action.
 - **Collection** holds the scan statistics, format breakdown, the subfolder setting, rescan, and SVG conversion status.
 
+## Language
+
+Settings offers English and Simplified Chinese. The choice applies immediately, covers the whole interface and the native delete dialogs, and switches the reconstruction prompts and the prompt-writing instruction to Chinese so they can be read and edited without English.
+
 ## Run it
 
 For development:

@@ -42,9 +42,10 @@ import {
   Redo2,
 } from 'lucide-react'
 import { RECOLOUR_VARIATIONS } from '../shared/recolour'
+import { LanguageContext, LANGUAGES, localeFor, readStoredLanguage, storeLanguage, translate, useLanguage, type Language, type Translate } from './i18n'
 import { AI_BACKDROPS, AI_MODELS, backdropById, DEFAULT_AI_BACKDROP, DEFAULT_AI_MODEL, DEFAULT_QWEN_REGION, IMAGE_SIZES, modelById, modelForSize, modelsForSize, PROVIDER_LABELS, QWEN_REGIONS, type AiProvider, type QwenRegion } from '../shared/models'
 import { ISSUE_TYPES, KNOWN_CLEAN_WATERMARK_FILENAMES, type CropInsets, type ImageDecision, type ImageRecord, type IssueType, type Notice, type PaintBrushShape, type PaintPoint, type PaintStroke, type PaletteAnalysisResult, type ProcessRequest, type ProcessResult, type ProjectState, type ImageSize, type ScanResult, type SvgConversionResult } from '../shared/types'
-import { appendRevision, peekRevision, BORDER_DEFAULT, ROTATION_LIMIT, BORDER_MAX, BORDER_MIN, borderedSize, borderPixels, brushMaxPixels, clampBorder, bulkTagAction, bulkTagState, brushPixelsFromSize, brushPixelsFromSlider, brushSizeFromPixels, brushSliderPosition, BRUSH_MIN_PIXELS, BRUSH_SLIDER_STEPS, buildGeminiPrompt, buildGeminiPresetPrompt, buildPromptAuthorInstruction, cleanAuthoredPrompt, canAcceptQuality, cropPixelSize, describeSortValue, isTextEntryElement, undoRedoIntent, exactDuplicateGroups, formatBytes, GEMINI_PRESETS, humanIssue, naturalSortDirection, nearDuplicateGroups, normalizedPointInRect, normalizeHexColor, pointerOverVisibleImage, visibleImageRect, selectionRange, QUALITY_RECOMMENDED_SCORE, sortDirectionLabel, sortImages, SORT_OPTIONS, squareCropInsets, stageImageGeometry, stageViewFraction, stageViewOffset, type DuplicateGroup, type GeminiPresetId, type SortDirection, type SortKey } from './utils'
+import { appendRevision, peekRevision, backdropPhrase, translateQualityReason, BORDER_DEFAULT, ROTATION_LIMIT, BORDER_MAX, BORDER_MIN, borderedSize, borderPixels, brushMaxPixels, clampBorder, bulkTagAction, bulkTagState, brushPixelsFromSize, brushPixelsFromSlider, brushSizeFromPixels, brushSliderPosition, BRUSH_MIN_PIXELS, BRUSH_SLIDER_STEPS, buildGeminiPrompt, buildGeminiPresetPrompt, buildPromptAuthorInstruction, cleanAuthoredPrompt, canAcceptQuality, cropPixelSize, describeSortValue, isTextEntryElement, undoRedoIntent, exactDuplicateGroups, formatBytes, GEMINI_PRESETS, humanIssue, naturalSortDirection, nearDuplicateGroups, normalizedPointInRect, normalizeHexColor, pointerOverVisibleImage, visibleImageRect, selectionRange, QUALITY_RECOMMENDED_SCORE, sortDirectionLabel, sortImages, SORT_OPTIONS, squareCropInsets, stageImageGeometry, stageViewFraction, stageViewOffset, type DuplicateGroup, type GeminiPresetId, type SortDirection, type SortKey } from './utils'
 
 // The workflow used to be three wizard steps in a sidebar. Everything now
 // lives on one library screen; these quick filters are both the collection's
@@ -147,6 +148,18 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error)
 }
 
+// The wording of the native delete confirmation, in the interface language.
+function deletionLabels(t: Translate, names: string[]) {
+  const listed = names.slice(0, 8).join('\n') + (names.length > 8 ? '\n' + t('…and {n} more', { n: names.length - 8 }) : '')
+  return {
+    title: names.length === 1 ? t('Delete image from folder?') : t('Delete images from folder?'),
+    message: names.length === 1 ? t('Move {name} to Trash?', { name: names[0] }) : t('Move {n} images to Trash?', { n: names.length }),
+    detail: (names.length === 1 ? '' : listed + '\n\n') + t('They will be removed from this collection. Existing reference copies in moodprep-originals will be kept.'),
+    cancel: t('Cancel'),
+    confirm: names.length === 1 ? t('Move to Trash') : t('Move {n} to Trash', { n: names.length }),
+  }
+}
+
 function qualitySuggestion(reason: string) {
   if (reason.startsWith('Short edge') || reason.includes('megapixels')) return 'Use 2× or 4× Resize, then inspect edges at 100%.'
   if (reason.includes('small data size')) return 'Try PNG or lossless WebP to avoid adding more compression.'
@@ -156,6 +169,11 @@ function qualitySuggestion(reason: string) {
 }
 
 export default function App() {
+  // The interface language is a per-machine preference, like the sort order.
+  const [language, setLanguageState] = useState<Language>(readStoredLanguage)
+  const t = useCallback<Translate>((key, vars) => translate(language, key, vars), [language])
+  const setLanguage = (next: Language) => { setLanguageState(next); storeLanguage(next) }
+  useEffect(() => { document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en' }, [language])
   const [scan, setScan] = useState<ScanResult | null>(null)
   const [decisions, setDecisions] = useState<Record<string, ImageDecision>>({})
   const [recursive, setRecursive] = useState(false)
@@ -195,7 +213,7 @@ export default function App() {
         updatedAt: new Date().toISOString(),
         decisions,
       }
-      window.moodprep.saveProject(state).catch((error) => setNotice(`Could not save project: ${errorMessage(error)}`))
+      window.moodprep.saveProject(state).catch((error) => setNotice(t('Could not save project: {error}', { error: errorMessage(error) })))
     }, 500)
     return () => window.clearTimeout(timeout)
   }, [decisions, scan])
@@ -223,7 +241,7 @@ export default function App() {
 
   const runScan = async (folder = scan?.folder) => {
     if (!folder) return
-    setBusy('Scanning images and updating quality scores…')
+    setBusy(t('Scanning images and updating quality scores…'))
     try {
       const conversion = await window.moodprep.convertSvgs(folder, recursive)
       const [result, stored] = await Promise.all([
@@ -269,15 +287,15 @@ export default function App() {
       setSvgFailures(conversion.failed)
       void prunePreviews(folder, nextDecisions)
       const conversionNote = conversion.convertedCount
-        ? ` Converted ${conversion.convertedCount} SVG ${conversion.convertedCount === 1 ? 'file' : 'files'} to PNG; the SVG ${conversion.convertedCount === 1 ? 'is' : 'files are'} in moodprep-originals.`
+        ? ' ' + t(conversion.convertedCount === 1 ? 'Converted {n} SVG file to PNG; the SVG is in moodprep-originals.' : 'Converted {n} SVG files to PNG; the SVG files are in moodprep-originals.', { n: conversion.convertedCount })
         : ''
       // Say which way round the failure is. These files stay on disk and are
       // tried again on every launch, so a count with no verb read as a passing
       // hiccup rather than as a collection that will never finish converting.
       const failureNote = conversion.failed.length
-        ? ` ${conversion.failed.length} SVG ${conversion.failed.length === 1 ? 'file' : 'files'} could not be converted — see Collection.`
+        ? ' ' + t(conversion.failed.length === 1 ? '{n} SVG file could not be converted — see Collection.' : '{n} SVG files could not be converted — see Collection.', { n: conversion.failed.length })
         : ''
-      setNotice(`Indexed ${result.images.length} images.${conversionNote}${failureNote}`)
+      setNotice(t('Indexed {n} images.', { n: result.images.length }) + conversionNote + failureNote)
     } catch (error) {
       setNotice(errorMessage(error))
     } finally {
@@ -350,7 +368,7 @@ export default function App() {
           return next
         })
       })
-      .catch((error) => setNotice(`The image was saved, but its card could not be refreshed: ${errorMessage(error)}`))
+      .catch((error) => setNotice(t('The image was saved, but its card could not be refreshed: {error}', { error: errorMessage(error) })))
       .finally(() => setRefreshingPaths((current) => {
         const next = new Set(current)
         next.delete(replaced.path)
@@ -361,7 +379,7 @@ export default function App() {
   const duplicateImage = async (source: ImageRecord) => {
     const folder = scan?.folder
     if (!folder) return
-    setBusy(`Duplicating ${source.name}…`)
+    setBusy(t('Duplicating {name}…', { name: source.name }))
     try {
       const copy = await window.moodprep.duplicateImage(folder, source.path)
       setScan((current) => {
@@ -384,9 +402,9 @@ export default function App() {
           outputQuality: undefined,
         },
       }))
-      setNotice(`Created ${copy.name}. It keeps the same tags and is left out of duplicate review.`)
+      setNotice(t('Created {name}. It keeps the same tags and is left out of duplicate review.', { name: copy.name }))
     } catch (error) {
-      setNotice(`Could not duplicate ${source.name}: ${errorMessage(error)}`)
+      setNotice(t('Could not duplicate {name}: {error}', { name: source.name, error: errorMessage(error) }))
     } finally {
       setBusy(null)
     }
@@ -436,18 +454,18 @@ export default function App() {
     })
     const count = groups.reduce((sum, group) => sum + group.deletePaths.length, 0)
     if (!count) {
-      setNotice('Choose a keeper in at least one exact-match group first.')
+      setNotice(t('Choose a keeper in at least one exact-match group first.'))
       return
     }
-    const confirmed = window.confirm(`Delete ${count} confirmed exact ${count === 1 ? 'copy' : 'copies'} from this folder?\n\nEach file is verified against its chosen keeper, then moved to the macOS Trash.`)
+    const confirmed = window.confirm(t(count === 1 ? 'Delete {n} confirmed exact copy from this folder?' : 'Delete {n} confirmed exact copies from this folder?', { n: count }) + '\n\n' + t('Each file is verified against its chosen keeper, then moved to the macOS Trash.'))
     if (!confirmed) return
-    setBusy(`Deleting ${count} verified duplicate ${count === 1 ? 'copy' : 'copies'}…`)
+    setBusy(t(count === 1 ? 'Deleting {n} verified duplicate copy…' : 'Deleting {n} verified duplicate copies…', { n: count }))
     try {
       const result = await window.moodprep.deleteDuplicates(scan.folder, groups)
       await runScan(scan.folder)
       setNotice(result.failed.length
-        ? `Deleted ${result.deletedCount} copies; ${result.failed.length} could not be verified or removed.`
-        : `Deleted ${result.deletedCount} confirmed copies from the folder. They can still be recovered from Trash.`)
+        ? t('Deleted {n} copies; {failed} could not be verified or removed.', { n: result.deletedCount, failed: result.failed.length })
+        : t('Deleted {n} confirmed copies from the folder. They can still be recovered from Trash.', { n: result.deletedCount }))
     } catch (error) {
       setNotice(errorMessage(error))
     } finally {
@@ -457,24 +475,25 @@ export default function App() {
 
   if (!scan) {
     return (
+      <LanguageContext.Provider value={{ language, t }}>
       <div className="welcome-shell">
         <div className="welcome-noise" />
         <header className="welcome-header">
           <Logo />
-          <button className="icon-button light" onClick={() => setSettingsOpen(true)} aria-label="Open settings"><Settings size={19} /></button>
+          <button className="icon-button light" onClick={() => setSettingsOpen(true)} aria-label={t('Open settings')}><Settings size={19} /></button>
         </header>
         <main className="welcome-main">
-          <div className="eyebrow"><Sparkles size={15} /> Local image preparation</div>
-          <h1>Clean the noise.<br /><em>Keep the style.</em></h1>
-          <p>Review duplicates and repair technical defects directly in your Midjourney moodboard folder. Replaced originals are kept for reference.</p>
+          <div className="eyebrow"><Sparkles size={15} /> {t('Local image preparation')}</div>
+          <h1>{t('Clean the noise.')}<br /><em>{t('Keep the style.')}</em></h1>
+          <p>{t('Review duplicates and repair technical defects directly in your Midjourney moodboard folder. Replaced originals are kept for reference.')}</p>
           <button className="primary-button large" onClick={openFolder} disabled={Boolean(busy)}>
             {busy ? <LoaderCircle className="spin" size={20} /> : <FolderOpen size={20} />}
-            Choose image folder
+            {t('Choose image folder')}
           </button>
           <div className="welcome-features">
-            <span><Check size={15} /> Originals backed up automatically</span>
-            <span><Check size={15} /> SVG, JPG, PNG & WebP</span>
-            <span><Check size={15} /> AI only when you approve</span>
+            <span><Check size={15} /> {t('Originals backed up automatically')}</span>
+            <span><Check size={15} /> {t('SVG, JPG, PNG & WebP')}</span>
+            <span><Check size={15} /> {t('AI only when you approve')}</span>
           </div>
         </main>
         <div className="welcome-art" aria-hidden="true">
@@ -483,9 +502,10 @@ export default function App() {
           <div className="frame frame-three"><Crop /></div>
         </div>
         {busy && <BusyOverlay message={busy} />}
-        {settingsOpen && <SettingsDialog keyStatus={keyStatus} onStatus={setKeyStatus} onClose={() => setSettingsOpen(false)} />}
+        {settingsOpen && <SettingsDialog keyStatus={keyStatus} onStatus={setKeyStatus} language={language} onLanguage={setLanguage} onClose={() => setSettingsOpen(false)} />}
         {notice && <Toast notice={notice} onClose={() => setNotice(null)} />}
       </div>
+      </LanguageContext.Provider>
     )
   }
 
@@ -493,23 +513,24 @@ export default function App() {
   const duplicateAttention = exactCopies + nearGroups.length
 
   return (
+    <LanguageContext.Provider value={{ language, t }}>
     <div className="app-shell">
       <header className="topbar">
         <Logo />
         <div className="topbar-folder">
-          <span>Collection</span>
-          <button className="folder-button" title={`Reveal ${scan.folder}`} onClick={() => window.moodprep.revealPath(scan.folder)}>
+          <span>{t('Collection')}</span>
+          <button className="folder-button" title={t('Reveal {folder}', { folder: scan.folder })} onClick={() => window.moodprep.revealPath(scan.folder)}>
             <FolderOpen size={14} /> {scan.folder.split('/').pop()}
           </button>
         </div>
         <div className="topbar-actions">
           <button className={`chip-button ${duplicateAttention ? 'attention' : ''}`} onClick={() => setDuplicatesTab(exactCopies ? 'exact' : 'near')}>
-            <Copy size={15} /> Duplicates {duplicateAttention > 0 && <b>{duplicateAttention}</b>}
+            <Copy size={15} /> {t('Duplicates')} {duplicateAttention > 0 && <b>{duplicateAttention}</b>}
           </button>
-          <button className="chip-button" onClick={() => setCollectionOpen(true)}><ScanSearch size={15} /> Collection</button>
-          <button className="icon-button" onClick={() => runScan()} aria-label="Rescan folder" title="Rescan folder"><RotateCcw size={17} /></button>
-          <button className="icon-button" onClick={openFolder} aria-label="Change folder" title="Open a different folder"><FolderOpen size={17} /></button>
-          <button className="icon-button" onClick={() => setSettingsOpen(true)} aria-label="Open settings" title="Settings"><Settings size={17} /></button>
+          <button className="chip-button" onClick={() => setCollectionOpen(true)}><ScanSearch size={15} /> {t('Collection')}</button>
+          <button className="icon-button" onClick={() => runScan()} aria-label={t('Rescan folder')} title={t('Rescan folder')}><RotateCcw size={17} /></button>
+          <button className="icon-button" onClick={openFolder} aria-label={t('Change folder')} title={t('Open a different folder')}><FolderOpen size={17} /></button>
+          <button className="icon-button" onClick={() => setSettingsOpen(true)} aria-label={t('Open settings')} title={t('Settings')}><Settings size={17} /></button>
         </div>
       </header>
 
@@ -537,9 +558,10 @@ export default function App() {
       {duplicatesTab && <DuplicatesDialog tab={duplicatesTab} setTab={setDuplicatesTab} exactGroups={exactGroups} nearGroups={nearGroups} decisions={decisions} chooseKeeper={chooseKeeper} updateDecision={updateDecision} onDelete={deleteConfirmedDuplicates} onClose={() => setDuplicatesTab(null)} />}
       {collectionOpen && <CollectionDialog scan={scan} exactCopies={exactCopies} nearGroupCount={nearGroups.length} excluded={excluded} recursive={recursive} setRecursive={setRecursive} svgFailures={svgFailures} onRescan={() => runScan()} onChangeFolder={openFolder} onClose={() => setCollectionOpen(false)} />}
       {busy && <BusyOverlay message={busy} />}
-      {settingsOpen && <SettingsDialog keyStatus={keyStatus} onStatus={setKeyStatus} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsDialog keyStatus={keyStatus} onStatus={setKeyStatus} language={language} onLanguage={setLanguage} onClose={() => setSettingsOpen(false)} />}
       {notice && <Toast notice={notice} onClose={() => setNotice(null)} />}
     </div>
+    </LanguageContext.Provider>
   )
 }
 
@@ -566,34 +588,35 @@ function CollectionDialog({ scan, exactCopies, nearGroupCount, excluded, recursi
   }, [scan.images])
   const lowQuality = scan.images.filter((image) => image.suggestedIssues.includes('low_quality')).length
   const svgCount = scan.images.filter((image) => image.extension === 'svg').length
+  const { t, language } = useLanguage()
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Collection">
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label={t('Collection')}>
       <div className="sheet-dialog">
         <header>
-          <div><span>Collection</span><strong title={scan.folder}>{scan.folder}</strong></div>
-          <button className="icon-button" onClick={onClose} aria-label="Close"><X size={18} /></button>
+          <div><span>{t('Collection')}</span><strong title={scan.folder}>{scan.folder}</strong></div>
+          <button className="icon-button" onClick={onClose} aria-label={t('Close')}><X size={18} /></button>
         </header>
         <div className="sheet-body">
           <div className="stat-grid">
-            <StatCard icon={ImageIcon} value={scan.images.length} label="Images indexed" accent="ink" />
-            <StatCard icon={Copy} value={exactCopies} label="Exact copies" accent="red" />
-            <StatCard icon={ScanSearch} value={nearGroupCount} label="Near-match groups" accent="orange" />
-            <StatCard icon={CircleAlert} value={lowQuality} label="Low-quality flags" accent="blue" />
+            <StatCard icon={ImageIcon} value={scan.images.length} label={t('Images indexed')} accent="ink" />
+            <StatCard icon={Copy} value={exactCopies} label={t('Exact copies')} accent="red" />
+            <StatCard icon={ScanSearch} value={nearGroupCount} label={t('Near-match groups')} accent="orange" />
+            <StatCard icon={CircleAlert} value={lowQuality} label={t('Low-quality flags')} accent="blue" />
           </div>
           <div className="split-grid">
             <div className="panel">
-              <div className="panel-heading"><div><span>Collection makeup</span><h3>Formats</h3></div><small>{scan.ignoredFiles} unsupported files ignored</small></div>
+              <div className="panel-heading"><div><span>{t('Collection makeup')}</span><h3>{t('Formats')}</h3></div><small>{t('{n} unsupported files ignored', { n: scan.ignoredFiles })}</small></div>
               <div className="format-list">
                 {formats.map(([format, count]) => (
                   <div key={format}><strong>{format}</strong><span><i style={{ width: `${(count / scan.images.length) * 100}%` }} /></span><b>{count}</b></div>
                 ))}
               </div>
               <label className="toggle-row">
-                <span><strong>Include subfolders</strong><small>Scan nested image folders up to 12 levels</small></span>
+                <span><strong>{t('Include subfolders')}</strong><small>{t('Scan nested image folders up to 12 levels')}</small></span>
                 <input type="checkbox" checked={recursive} onChange={(event) => setRecursive(event.target.checked)} />
                 <i />
               </label>
-              <button className="text-button" onClick={onRescan}><RotateCcw size={15} /> Rescan with this setting</button>
+              <button className="text-button" onClick={onRescan}><RotateCcw size={15} /> {t('Rescan with this setting')}</button>
             </div>
             <div className="panel conversion-panel">
               <div className="conversion-icon"><span>SVG</span><ChevronRight /><span>PNG</span></div>
@@ -602,9 +625,9 @@ function CollectionDialog({ scan, exactCopies, nearGroupCount, excluded, recursi
                   been tried. Once intake has reported one, calling it pending
                   is the thing that hid a broken conversion for weeks. */}
               <h3>{svgFailures.length
-                ? `${svgFailures.length} vector ${svgFailures.length === 1 ? 'file' : 'files'} could not be converted`
-                : svgCount ? `${svgCount} vector ${svgCount === 1 ? 'file' : 'files'} pending` : 'SVG conversion complete'}</h3>
-              <p>SVG sources become clean 2048 px PNG files during intake. Source vectors move to moodprep-originals for reference.</p>
+                ? t(svgFailures.length === 1 ? '{n} vector file could not be converted' : '{n} vector files could not be converted', { n: svgFailures.length })
+                : svgCount ? t(svgCount === 1 ? '{n} vector file pending' : '{n} vector files pending', { n: svgCount }) : t('SVG conversion complete')}</h3>
+              <p>{t('SVG sources become clean 2048 px PNG files during intake. Source vectors move to moodprep-originals for reference.')}</p>
               {svgFailures.length > 0 && (
                 <ul className="conversion-failures">
                   {svgFailures.map((failure) => (
@@ -617,17 +640,17 @@ function CollectionDialog({ scan, exactCopies, nearGroupCount, excluded, recursi
               )}
               <div className="safe-note">
                 {svgFailures.length
-                  ? <><CircleAlert size={16} /> These stay as SVG and are retried on every scan</>
-                  : <><Check size={16} /> Replaced originals are backed up</>}
+                  ? <><CircleAlert size={16} /> {t('These stay as SVG and are retried on every scan')}</>
+                  : <><Check size={16} /> {t('Replaced originals are backed up')}</>}
               </div>
             </div>
           </div>
         </div>
         <footer>
-          <span><Check size={15} /> {scan.images.length - excluded} of {scan.images.length} images included · scanned {new Date(scan.scannedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}{scan.analysed > 0 ? ` · ${scan.analysed} new or changed` : scan.images.length > 0 ? ' · nothing changed since the last scan' : ''}</span>
+          <span><Check size={15} /> {t('{included} of {total} images included · scanned {time}', { included: scan.images.length - excluded, total: scan.images.length, time: new Date(scan.scannedAt).toLocaleTimeString(localeFor(language), { hour: '2-digit', minute: '2-digit' }) })}{scan.analysed > 0 ? t(' · {n} new or changed', { n: scan.analysed }) : scan.images.length > 0 ? t(' · nothing changed since the last scan') : ''}</span>
           <div>
-            <button className="secondary-button" onClick={onChangeFolder}><FolderOpen size={16} /> Change folder</button>
-            <button className="primary-button" onClick={onClose}>Done</button>
+            <button className="secondary-button" onClick={onChangeFolder}><FolderOpen size={16} /> {t('Change folder')}</button>
+            <button className="primary-button" onClick={onClose}>{t('Done')}</button>
           </div>
         </footer>
       </div>
@@ -648,30 +671,31 @@ function DuplicatesDialog({ tab, setTab, exactGroups, nearGroups, decisions, cho
 }) {
   const groups = tab === 'exact' ? exactGroups : nearGroups
   const exactExcluded = exactGroups.flatMap((group) => group.images).filter((image) => decisions[image.id]?.status === 'exclude').length
+  const { t } = useLanguage()
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Duplicates">
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label={t('Duplicates')}>
       <div className="sheet-dialog wide">
         <header>
-          <div><span>Duplicates</span><strong>Keep the strongest version</strong></div>
-          <button className="icon-button" onClick={onClose} aria-label="Close"><X size={18} /></button>
+          <div><span>{t('Duplicates')}</span><strong>{t('Keep the strongest version')}</strong></div>
+          <button className="icon-button" onClick={onClose} aria-label={t('Close')}><X size={18} /></button>
         </header>
         <div className="sheet-body">
-          <p className="sheet-note">Exact copies are certain. Near matches are suggestions only — related brand artwork should remain separate.</p>
+          <p className="sheet-note">{t('Exact copies are certain. Near matches are suggestions only — related brand artwork should remain separate.')}</p>
           <div className="tab-row">
-            <button className={tab === 'exact' ? 'active' : ''} onClick={() => setTab('exact')}>Exact copies <span>{exactGroups.length}</span></button>
-            <button className={tab === 'near' ? 'active' : ''} onClick={() => setTab('near')}>Visual matches <span>{nearGroups.length}</span></button>
-            {tab === 'exact' && exactGroups.length > 0 && <button className="apply-recommended" onClick={() => exactGroups.forEach((group) => chooseKeeper(group, group.recommendedId))}><Sparkles size={13} /> Apply all recommendations</button>}
-            {tab === 'exact' && exactExcluded > 0 && <button className="delete-duplicates" onClick={onDelete}><Trash2 size={13} /> Delete {exactExcluded} confirmed {exactExcluded === 1 ? 'copy' : 'copies'}</button>}
+            <button className={tab === 'exact' ? 'active' : ''} onClick={() => setTab('exact')}>{t('Exact copies')} <span>{exactGroups.length}</span></button>
+            <button className={tab === 'near' ? 'active' : ''} onClick={() => setTab('near')}>{t('Visual matches')} <span>{nearGroups.length}</span></button>
+            {tab === 'exact' && exactGroups.length > 0 && <button className="apply-recommended" onClick={() => exactGroups.forEach((group) => chooseKeeper(group, group.recommendedId))}><Sparkles size={13} /> {t('Apply all recommendations')}</button>}
+            {tab === 'exact' && exactExcluded > 0 && <button className="delete-duplicates" onClick={onDelete}><Trash2 size={13} /> {t(exactExcluded === 1 ? 'Delete {n} confirmed copy' : 'Delete {n} confirmed copies', { n: exactExcluded })}</button>}
           </div>
           {groups.length === 0 ? (
-            <EmptyState icon={Copy} title={tab === 'exact' ? 'No exact copies found' : 'No close visual matches found'} body="Nothing needs your attention in this category." />
+            <EmptyState icon={Copy} title={tab === 'exact' ? t('No exact copies found') : t('No close visual matches found')} body={t('Nothing needs your attention in this category.')} />
           ) : (
             <div className="duplicate-list">
               {groups.map((group, index) => (
                 <div className="duplicate-group" key={group.id}>
                   <div className="duplicate-heading">
-                    <div><span>{group.type === 'exact' ? 'Exact match' : 'Review match'} {String(index + 1).padStart(2, '0')}</span><strong>{group.images.length} versions</strong></div>
-                    <button className="text-button" onClick={() => group.images.forEach((image) => updateDecision(image.id, { status: 'keep' }))}>Keep all as different</button>
+                    <div><span>{group.type === 'exact' ? t('Exact match') : t('Review match')} {String(index + 1).padStart(2, '0')}</span><strong>{t('{n} versions', { n: group.images.length })}</strong></div>
+                    <button className="text-button" onClick={() => group.images.forEach((image) => updateDecision(image.id, { status: 'keep' }))}>{t('Keep all as different')}</button>
                   </div>
                   <div className="duplicate-images">
                     {group.images.map((image) => {
@@ -679,10 +703,10 @@ function DuplicatesDialog({ tab, setTab, exactGroups, nearGroups, decisions, cho
                       const recommended = image.id === group.recommendedId
                       return (
                         <button key={image.id} className={`duplicate-card ${selected ? 'selected' : ''}`} onClick={() => chooseKeeper(group, image.id)}>
-                          <div className="duplicate-thumb"><img src={image.thumbnailDataUrl} alt="" />{recommended && <span className="recommendation"><Sparkles size={12} /> Recommended</span>}</div>
+                          <div className="duplicate-thumb"><img src={image.thumbnailDataUrl} alt="" />{recommended && <span className="recommendation"><Sparkles size={12} /> {t('Recommended')}</span>}</div>
                           <div className="duplicate-meta"><strong title={image.name}>{image.name}</strong><span>{image.width} × {image.height} · {formatBytes(image.bytes)}</span></div>
                           <div className="quality-line"><i style={{ width: `${image.quality.score}%` }} /><span>{image.quality.score}</span></div>
-                          <div className="keeper-choice"><span>{selected ? <Check size={15} /> : null}</span>{selected ? 'Chosen keeper' : 'Choose this one'}</div>
+                          <div className="keeper-choice"><span>{selected ? <Check size={15} /> : null}</span>{selected ? t('Chosen keeper') : t('Choose this one')}</div>
                         </button>
                       )
                     })}
@@ -693,8 +717,8 @@ function DuplicatesDialog({ tab, setTab, exactGroups, nearGroups, decisions, cho
           )}
         </div>
         <footer>
-          <span><Check size={15} /> Excluded copies stay on disk until you delete them explicitly</span>
-          <button className="primary-button" onClick={onClose}>Back to library</button>
+          <span><Check size={15} /> {t('Excluded copies stay on disk until you delete them explicitly')}</span>
+          <button className="primary-button" onClick={onClose}>{t('Back to library')}</button>
         </footer>
       </div>
     </div>
@@ -721,6 +745,7 @@ function LibraryView({ scan, decisions, excluded, updateDecision, refreshingPath
   onDuplicated: (image: ImageRecord) => void
   onEditorClosed: () => void
 }) {
+  const { t, language } = useLanguage()
   const [search, setSearch] = useState('')
   const [issueFilter, setIssueFilter] = useState<IssueType | 'all'>('all')
   const [quickFilter, setQuickFilter] = useState<QuickFilter>('all')
@@ -834,7 +859,7 @@ function LibraryView({ scan, decisions, excluded, updateDecision, refreshingPath
     if (targets.length === 0 || deletingSelection) return
     setDeletingSelection(true)
     try {
-      const result = await window.moodprep.deleteImages(scan.folder, targets.map((image) => image.path))
+      const result = await window.moodprep.deleteImages(scan.folder, targets.map((image) => image.path), deletionLabels(t, targets.map((image) => image.name)))
       if (result.cancelled) return
       const failedPaths = new Set(result.failed.map((entry) => entry.path))
       const removed = targets.filter((image) => !failedPaths.has(image.path))
@@ -847,12 +872,12 @@ function LibraryView({ scan, decisions, excluded, updateDecision, refreshingPath
         })
       }
       if (result.failed.length > 0) {
-        onNotice(`${removed.length} moved to Trash · ${result.failed.length} could not be deleted: ${result.failed[0].reason}`)
+        onNotice(t('{n} moved to Trash · {failed} could not be deleted: {reason}', { n: removed.length, failed: result.failed.length, reason: result.failed[0].reason }))
       } else if (removed.length > 0) {
-        onNotice(`${removed.length} ${removed.length === 1 ? 'image' : 'images'} moved to Trash. They can still be recovered from there.`)
+        onNotice(t(removed.length === 1 ? '{n} image moved to Trash. They can still be recovered from there.' : '{n} images moved to Trash. They can still be recovered from there.', { n: removed.length }))
       }
     } catch (error) {
-      onNotice(`Could not delete the selection: ${errorMessage(error)}`)
+      onNotice(t('Could not delete the selection: {error}', { error: errorMessage(error) }))
     } finally {
       setDeletingSelection(false)
     }
@@ -902,47 +927,47 @@ function LibraryView({ scan, decisions, excluded, updateDecision, refreshingPath
   return (
     <main className="library">
       <div className="library-toolbar">
-        <div className="filter-chips" role="group" aria-label="Quick filters">
+        <div className="filter-chips" role="group" aria-label={t('Quick filters')}>
           {QUICK_FILTERS.map((filter) => (
             <button key={filter.id} className={quickFilter === filter.id ? 'active' : ''} onClick={() => setQuickFilter(filter.id)} aria-pressed={quickFilter === filter.id}>
-              {filter.label} <b>{counts[filter.id]}</b>
+              {t(filter.label)} <b>{counts[filter.id]}</b>
             </button>
           ))}
           <span className="chip-divider" />
-          <button className="link-chip" onClick={() => openDuplicates('exact')}><Copy size={13} /> {exactCopies} exact {exactCopies === 1 ? 'copy' : 'copies'}</button>
-          <button className="link-chip" onClick={() => openDuplicates('near')}><Layers size={13} /> {nearGroupCount} near {nearGroupCount === 1 ? 'match' : 'matches'}</button>
-          {excluded > 0 && <span className="excluded-chip">{excluded} excluded</span>}
+          <button className="link-chip" onClick={() => openDuplicates('exact')}><Copy size={13} /> {t(exactCopies === 1 ? '{n} exact copy' : '{n} exact copies', { n: exactCopies })}</button>
+          <button className="link-chip" onClick={() => openDuplicates('near')}><Layers size={13} /> {t(nearGroupCount === 1 ? '{n} near match' : '{n} near matches', { n: nearGroupCount })}</button>
+          {excluded > 0 && <span className="excluded-chip">{t('{n} excluded', { n: excluded })}</span>}
         </div>
         <div className="toolbar-controls">
-          <label className="search-box"><Search size={17} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search filenames" /></label>
-          <select value={issueFilter} onChange={(event) => setIssueFilter(event.target.value as IssueType | 'all')} aria-label="Filter by issue">
-            <option value="all">All issues</option>
-            {ISSUE_TYPES.map((issue) => <option key={issue} value={issue}>{humanIssue(issue)}</option>)}
+          <label className="search-box"><Search size={17} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('Search filenames')} /></label>
+          <select value={issueFilter} onChange={(event) => setIssueFilter(event.target.value as IssueType | 'all')} aria-label={t('Filter by issue')}>
+            <option value="all">{t('All issues')}</option>
+            {ISSUE_TYPES.map((issue) => <option key={issue} value={issue}>{t(humanIssue(issue))}</option>)}
           </select>
           <div className="sort-control">
             <ArrowDownUp size={15} />
-            <select value={sort.key} onChange={(event) => changeSortKey(event.target.value as SortKey)} aria-label="Sort images by">
-              {SORT_OPTIONS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+            <select value={sort.key} onChange={(event) => changeSortKey(event.target.value as SortKey)} aria-label={t('Sort images by')}>
+              {SORT_OPTIONS.map((option) => <option key={option.id} value={option.id}>{t(option.label)}</option>)}
             </select>
-            <button onClick={toggleSortDirection} title="Reverse the sort order" aria-label={`Sorted ${sortDirectionLabel(sort.key, sort.direction)}. Reverse the order.`}>
-              {sortDirectionLabel(sort.key, sort.direction)}
+            <button onClick={toggleSortDirection} title={t('Reverse the sort order')} aria-label={t('Sorted {order}. Reverse the order.', { order: t(sortDirectionLabel(sort.key, sort.direction)) })}>
+              {t(sortDirectionLabel(sort.key, sort.direction))}
             </button>
           </div>
-          <span className="image-count"><Images size={14} /> {images.length}{filtered ? ` of ${counts.all}` : ''} shown</span>
+          <span className="image-count"><Images size={14} /> {filtered ? t('{n} of {total} shown', { n: images.length, total: counts.all }) : t('{n} shown', { n: images.length })}</span>
         </div>
       </div>
 
       {selected.size > 0 && (
-        <div className="bulk-bar" role="toolbar" aria-label={`${selected.size} images selected`}>
+        <div className="bulk-bar" role="toolbar" aria-label={t('{n} images selected', { n: selected.size })}>
           <div className="bulk-count">
-            <strong>{selected.size} selected</strong>
-            {hiddenSelected > 0 && <button className="bulk-hidden" onClick={keepOnlyShown} title="Drop the images the current filters are hiding from this selection">{hiddenSelected} not shown here · keep only visible</button>}
+            <strong>{t('{n} selected', { n: selected.size })}</strong>
+            {hiddenSelected > 0 && <button className="bulk-hidden" onClick={keepOnlyShown} title={t('Drop the images the current filters are hiding from this selection')}>{t('{n} not shown here · keep only visible', { n: hiddenSelected })}</button>}
           </div>
           <div className="bulk-picks">
-            <button onClick={selectAllShown} disabled={selectedShown.length === images.length}>Select all {images.length}</button>
-            <button onClick={clearSelection}>Clear</button>
+            <button onClick={selectAllShown} disabled={selectedShown.length === images.length}>{t('Select all {n}', { n: images.length })}</button>
+            <button onClick={clearSelection}>{t('Clear')}</button>
           </div>
-          <div className="bulk-tags" role="group" aria-label="Tags for the selection">
+          <div className="bulk-tags" role="group" aria-label={t('Tags for the selection')}>
             {ISSUE_TYPES.map((issue) => {
               const state = tagStates[issue]
               return (
@@ -951,23 +976,23 @@ function LibraryView({ scan, decisions, excluded, updateDecision, refreshingPath
                   className={`bulk-tag ${state}`}
                   aria-pressed={state === 'all'}
                   onClick={() => applyIssue(issue)}
-                  title={state === 'all' ? `Remove ${humanIssue(issue)} from all ${selected.size}` : state === 'some' ? `Add ${humanIssue(issue)} to all ${selected.size} — some already have it` : `Add ${humanIssue(issue)} to all ${selected.size}`}
+                  title={t(state === 'all' ? 'Remove {tag} from all {n}' : state === 'some' ? 'Add {tag} to all {n} — some already have it' : 'Add {tag} to all {n}', { tag: t(humanIssue(issue)), n: selected.size })}
                 >
                   <span className="bulk-tag-state" aria-hidden="true">{state === 'all' ? <Check size={11} /> : state === 'some' ? <Minus size={11} /> : null}</span>
-                  {humanIssue(issue)}
+                  {t(humanIssue(issue))}
                 </button>
               )
             })}
           </div>
           <button className="bulk-delete" onClick={deleteSelected} disabled={deletingSelection}>
-            {deletingSelection ? <LoaderCircle className="spin" size={14} /> : <Trash2 size={14} />} Delete {selected.size}…
+            {deletingSelection ? <LoaderCircle className="spin" size={14} /> : <Trash2 size={14} />} {t('Delete {n}…', { n: selected.size })}
           </button>
         </div>
       )}
 
       <div className="library-body">
         {images.length === 0 ? (
-          <EmptyState icon={Images} title="No images match these filters" body="Clear the search, issue filter, or quick filter to see the rest of the collection." />
+          <EmptyState icon={Images} title={t('No images match these filters')} body={t('Clear the search, issue filter, or quick filter to see the rest of the collection.')} />
         ) : (
           <div className="image-grid">
             {images.slice(0, mounted).map((image) => {
@@ -976,15 +1001,15 @@ function LibraryView({ scan, decisions, excluded, updateDecision, refreshingPath
               const refreshing = refreshingPaths.has(image.path)
               return (
                 <article className={`image-card ${selected.has(image.id) ? 'selected' : ''} ${refreshing ? 'refreshing' : ''}`} key={image.id}>
-                  <button className="select-check" disabled={refreshing} onClick={(event) => toggleSelected(image.id, event.shiftKey)} aria-label={`Select ${image.name}`} title="Select · shift-click to select a range">{selected.has(image.id) && <Check size={14} />}</button>
+                  <button className="select-check" disabled={refreshing} onClick={(event) => toggleSelected(image.id, event.shiftKey)} aria-label={t('Select {name}', { name: image.name })} title={t('Select · shift-click to select a range')}>{selected.has(image.id) && <Check size={14} />}</button>
                   <button className="image-open" disabled={refreshing} onClick={() => setEditing(image)}>
-                    <div className="image-preview"><img src={decision.outputThumbnail || image.thumbnailDataUrl} alt="" />{(decision.outputPath || decision.processedAt || image.processed) && <span className="processed-mark"><WandSparkles size={13} /> Processed</span>}{refreshing && <span className="refreshing-mark"><LoaderCircle className="spin" size={12} /> Updating</span>}</div>
-                    <div className="image-card-body"><strong title={image.name}>{image.name}</strong><span>{describeSortValue(image, sort.key)} · <b className={`quality-${displayedQuality.label.toLowerCase()}`}>{displayedQuality.label} {displayedQuality.score}/100</b></span></div>
+                    <div className="image-preview"><img src={decision.outputThumbnail || image.thumbnailDataUrl} alt="" />{(decision.outputPath || decision.processedAt || image.processed) && <span className="processed-mark"><WandSparkles size={13} /> {t('Processed')}</span>}{refreshing && <span className="refreshing-mark"><LoaderCircle className="spin" size={12} /> {t('Updating')}</span>}</div>
+                    <div className="image-card-body"><strong title={image.name}>{image.name}</strong><span>{t(describeSortValue(image, sort.key, localeFor(language)))} · <b className={`quality-${displayedQuality.label.toLowerCase()}`}>{t(displayedQuality.label)} {displayedQuality.score}/100</b></span></div>
                   </button>
                   <div className="tag-strip">
-                    {decision.issues.slice(0, 2).map((issue) => <span key={issue}>{humanIssue(issue)}</span>)}
+                    {decision.issues.slice(0, 2).map((issue) => <span key={issue}>{t(humanIssue(issue))}</span>)}
                     {decision.issues.length > 2 && <span>+{decision.issues.length - 2}</span>}
-                    {decision.issues.length === 0 && <span className="clean-tag">No fixes</span>}
+                    {decision.issues.length === 0 && <span className="clean-tag">{t('No fixes')}</span>}
                   </div>
                 </article>
               )
@@ -993,7 +1018,7 @@ function LibraryView({ scan, decisions, excluded, updateDecision, refreshingPath
         )}
         {mounted < images.length && (
           <div className="grid-more" ref={gridSentinel}>
-            <LoaderCircle className="spin" size={14} /> {images.length - mounted} more
+            <LoaderCircle className="spin" size={14} /> {t('{n} more', { n: images.length - mounted })}
           </div>
         )}
       </div>
@@ -1062,6 +1087,7 @@ function ImageStage({ image, crop, onChange, zoom, rotation, cropEnabled, square
   // Pointer-up on a stroke. The brush is a direct tool, so this is the commit.
   onStrokeEnd: () => void
 }) {
+  const { t } = useLanguage()
   const viewportRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<CropDrag | null>(null)
@@ -1484,13 +1510,13 @@ function ImageStage({ image, crop, onChange, zoom, rotation, cropEnabled, square
                 style={{ left: `${crop.left}%`, right: `${crop.right}%`, top: `${crop.top}%`, bottom: `${crop.bottom}%` }}
                 onPointerDown={(event) => beginDrag(event, [], true)}
               >
-                <span className="crop-move-hint">{crop.left + crop.right + crop.top + crop.bottom === 0 ? 'Drag a handle inward to crop' : squareCrop ? 'Locked to 1:1 · drag to reposition' : 'Drag to reposition'}</span>
+                <span className="crop-move-hint">{crop.left + crop.right + crop.top + crop.bottom === 0 ? t('Drag a handle inward to crop') : squareCrop ? t('Locked to 1:1 · drag to reposition') : t('Drag to reposition')}</span>
                 {CROP_HANDLES.map((handle) => (
                   <button
                   key={handle.className}
                   type="button"
                   className={`crop-handle ${handle.className}`}
-                  aria-label={handle.label}
+                  aria-label={t(handle.label)}
                   onPointerDown={(event) => beginDrag(event, handle.edges)}
                   />
                 ))}
@@ -1539,6 +1565,7 @@ function EditorDialog({ image, decision, projectPath, keyStatus, openSettings, o
   onDuplicated: (image: ImageRecord) => void
   onClose: () => void
 }) {
+  const { t, language } = useLanguage()
   const startsFromProcessedResult = Boolean(decision.outputPath)
   const [timeline, setTimeline] = useState<{ revisions: ProcessResult[]; index: number }>(() => ({
     revisions: [{
@@ -1608,7 +1635,7 @@ function EditorDialog({ image, decision, projectPath, keyStatus, openSettings, o
   const [filling, setFilling] = useState(false)
   const [format, setFormat] = useState<'png' | 'jpeg' | 'webp'>(image.extension === 'webp' ? 'webp' : image.extension === 'png' ? 'png' : 'jpeg')
   const [geminiPreset, setGeminiPreset] = useState<GeminiPresetId>('standard')
-  const [prompt, setPrompt] = useState(buildGeminiPrompt(decision.issues))
+  const [prompt, setPrompt] = useState(() => buildGeminiPrompt(decision.issues, language))
   const [imageSize, setImageSize] = useState<ImageSize>('1K')
   const [aiModel, setAiModel] = useState<string>(DEFAULT_AI_MODEL)
   const [aiBackdrop, setAiBackdrop] = useState<string>(DEFAULT_AI_BACKDROP)
@@ -1695,14 +1722,14 @@ function EditorDialog({ image, decision, projectPath, keyStatus, openSettings, o
     try {
       const result = await window.moodprep.detectBackground(working.outputPath)
       setBackground(result.color)
-      onNotice(`Background detected as ${result.color.toUpperCase()}.`)
+      onNotice(t('Background detected as {colour}.', { colour: result.color.toUpperCase() }))
     } catch (error) {
-      onNotice(`Could not detect the background: ${errorMessage(error)}`)
+      onNotice(t('Could not detect the background: {error}', { error: errorMessage(error) }))
     }
   }
   const applyIssues = (issues: IssueType[]) => {
     onUpdate({ issues })
-    setPrompt(buildGeminiPresetPrompt(geminiPreset, issues, backdropById(aiBackdrop).phrase))
+    setPrompt(buildGeminiPresetPrompt(geminiPreset, issues, backdropPhrase(aiBackdrop, language), language))
   }
   // Adding a tag is a cheap, reversible note. Removing one asserts the issue
   // does not apply to this image, which changes what the collection records,
@@ -1736,16 +1763,16 @@ function EditorDialog({ image, decision, projectPath, keyStatus, openSettings, o
     try {
       const result = await window.moodprep.authorPrompt({
         imagePath: working.outputPath,
-        instruction: buildPromptAuthorInstruction(decision.issues, backdropById(aiBackdrop).phrase),
+        instruction: buildPromptAuthorInstruction(decision.issues, backdropPhrase(aiBackdrop, language), language),
       })
       const written = cleanAuthoredPrompt(result.prompt)
-      if (!written) throw new Error('The reply came back empty.')
+      if (!written) throw new Error(t('The reply came back empty.'))
       setGeminiPreset('custom')
       setPrompt(written)
       setAuthored(true)
-      onNotice('Wrote a prompt for this image. Read it before running it — it is editable like any other.')
+      onNotice(t('Wrote a prompt for this image. Read it before running it — it is editable like any other.'))
     } catch (error) {
-      onNotice(`Could not write a prompt for this image: ${errorMessage(error)}`)
+      onNotice(t('Could not write a prompt for this image: {error}', { error: errorMessage(error) }))
     } finally {
       setAuthoring(false)
     }
@@ -1753,12 +1780,12 @@ function EditorDialog({ image, decision, projectPath, keyStatus, openSettings, o
 
   const chooseBackdrop = (id: string) => {
     setAiBackdrop(id)
-    setPrompt(buildGeminiPresetPrompt(geminiPreset, decision.issues, backdropById(id).phrase))
+    setPrompt(buildGeminiPresetPrompt(geminiPreset, decision.issues, backdropPhrase(id, language), language))
   }
   const chooseGeminiPreset = (preset: GeminiPresetId) => {
     setGeminiPreset(preset)
     setAuthored(false)
-    setPrompt(buildGeminiPresetPrompt(preset, decision.issues, backdropById(aiBackdrop).phrase))
+    setPrompt(buildGeminiPresetPrompt(preset, decision.issues, backdropPhrase(aiBackdrop, language), language))
     // The preset's own floor rather than a list of ids, and the size then
     // decides the model: Flash Lite serves 1K only, so a preset that needs 2K
     // has to move off it or every request comes back as a 404 that reads like
@@ -1852,20 +1879,20 @@ function EditorDialog({ image, decision, projectPath, keyStatus, openSettings, o
     } catch (error) { onNotice(errorMessage(error)) } finally { onBusy(null) }
   }
   const applyCrop = () => applyStep(
-    'Applying the crop…',
-    (revision) => `Crop applied · revision ${revision}. Undo remains available.`,
+    t('Applying the crop…'),
+    (revision) => t('Crop applied · revision {n}. Undo remains available.', { n: revision }),
     { crop, squareCrop: squareCrop || undefined },
     resetCrop,
   )
   const applyStraighten = () => applyStep(
-    'Straightening…',
-    (revision) => `Straightened ${rotation > 0 ? '' : ''}${rotation.toFixed(1)}° · revision ${revision}. Undo remains available.`,
+    t('Straightening…'),
+    (revision) => t('Straightened {degrees}° · revision {n}. Undo remains available.', { degrees: rotation.toFixed(1), n: revision }),
     { rotation },
     resetStraighten,
   )
   const applyOutput = () => applyStep(
-    'Resizing…',
-    (revision) => `Resized ${upscale}× · revision ${revision}. Undo remains available.`,
+    t('Resizing…'),
+    (revision) => t('Resized {factor}× · revision {n}. Undo remains available.', { factor: upscale, n: revision }),
     { upscale },
     resetOutput,
   )
@@ -1882,8 +1909,8 @@ function EditorDialog({ image, decision, projectPath, keyStatus, openSettings, o
       }
     }
     await applyStep(
-      'Applying the adjustments…',
-      (revision) => `Adjustments applied${paletteColors ? ` with ${paletteColors} palette colours` : ''} · revision ${revision}. Undo remains available.`,
+      t('Applying the adjustments…'),
+      (revision) => t(paletteColors ? 'Adjustments applied with {colours} palette colours · revision {n}. Undo remains available.' : 'Adjustments applied · revision {n}. Undo remains available.', { colours: paletteColors, n: revision }),
       {
         trim,
         center,
@@ -1908,7 +1935,7 @@ function EditorDialog({ image, decision, projectPath, keyStatus, openSettings, o
   const modelReady = keyStatus[chosenModel.provider]
   const runGemini = async () => {
     if (!modelReady) { openSettings(); return }
-    onBusy(`${PROVIDER_LABELS[chosenModel.provider]} is reconstructing this image. This can take a minute…`)
+    onBusy(t('{provider} is reconstructing this image. This can take a minute…', { provider: PROVIDER_LABELS[chosenModel.provider] }))
     try {
       const result = await window.moodprep.aiEdit({
         projectPath,
@@ -1926,7 +1953,7 @@ function EditorDialog({ image, decision, projectPath, keyStatus, openSettings, o
         squareCanvas: geminiPreset === 'coaster' || undefined,
       })
       addRevision(result)
-      onNotice(`${chosenModel.label} revision applied. Inspect lettering and geometry; Undo remains available.`)
+      onNotice(t('{model} revision applied. Inspect lettering and geometry; Undo remains available.', { model: t(chosenModel.label) }))
     } catch (error) { onNotice(errorMessage(error)) } finally { onBusy(null) }
   }
   const moveToRevision = (index: number) => {
@@ -1978,7 +2005,7 @@ function EditorDialog({ image, decision, projectPath, keyStatus, openSettings, o
       })
       addRevision(result)
     } catch (error) {
-      onNotice(`Could not paint that stroke: ${errorMessage(error)}`)
+      onNotice(t('Could not paint that stroke: {error}', { error: errorMessage(error) }))
     } finally {
       paintingRef.current = false
       if (paintStrokesRef.current.length > 0) void flushStrokes()
@@ -2045,7 +2072,7 @@ function EditorDialog({ image, decision, projectPath, keyStatus, openSettings, o
       .then((result) => {
         if (cancelled || result.rotation === 0) return
         setRotationDegrees(result.rotation)
-        onNotice(`Auto-straighten suggests ${result.rotation.toFixed(1)}° from its Rotation Needed tag. Fine-tune with the slider, then apply local changes.`)
+        onNotice(t('Auto-straighten suggests {degrees}° from its Rotation Needed tag. Fine-tune with the slider, then apply local changes.', { degrees: result.rotation.toFixed(1) }))
       })
       .catch(() => undefined)
       .finally(() => { if (!cancelled) setRotationDetecting(false) })
@@ -2059,13 +2086,13 @@ function EditorDialog({ image, decision, projectPath, keyStatus, openSettings, o
       const result = await window.moodprep.detectRotation(working.outputPath)
       if (result.rotation === 0) {
         setRotationDegrees(0)
-        onNotice('No confident tilt detected; the artwork already reads as level.')
+        onNotice(t('No confident tilt detected; the artwork already reads as level.'))
       } else {
         setRotationDegrees(result.rotation)
-        onNotice(`Auto-straighten suggests ${result.rotation.toFixed(1)}°. Fine-tune with the slider, then apply local changes.`)
+        onNotice(t('Auto-straighten suggests {degrees}°. Fine-tune with the slider, then apply local changes.', { degrees: result.rotation.toFixed(1) }))
       }
     } catch (error) {
-      onNotice(`Could not analyze the rotation: ${errorMessage(error)}`)
+      onNotice(t('Could not analyze the rotation: {error}', { error: errorMessage(error) }))
     } finally {
       setRotationDetecting(false)
     }
@@ -2089,9 +2116,9 @@ function EditorDialog({ image, decision, projectPath, keyStatus, openSettings, o
   const colourControls = () => (
     <div className="colour-control">
       <div className="colour-main">
-        <label className="colour-chip" title="Open the system colour picker">
+        <label className="colour-chip" title={t('Open the system colour picker')}>
           <span style={{ background }} aria-hidden="true" />
-          <input type="color" value={background} onChange={(event) => chooseBackground(event.target.value)} aria-label="Working colour" />
+          <input type="color" value={background} onChange={(event) => chooseBackground(event.target.value)} aria-label={t('Working colour')} />
         </label>
         <label className="colour-hex">
           <span aria-hidden="true">#</span>
@@ -2103,25 +2130,25 @@ function EditorDialog({ image, decision, projectPath, keyStatus, openSettings, o
             spellCheck={false}
             autoComplete="off"
             maxLength={6}
-            aria-label="Working colour hex code"
-            title="Type or paste a hex code"
+            aria-label={t('Working colour hex code')}
+            title={t('Type or paste a hex code')}
           />
         </label>
-        <button type="button" className={`colour-auto ${automaticBackground ? 'active' : ''}`} onClick={useAutomaticBackground} title="Detect the image's dominant background colour"><Sparkles size={12} /> Auto</button>
+        <button type="button" className={`colour-auto ${automaticBackground ? 'active' : ''}`} onClick={useAutomaticBackground} title={t("Detect the image's dominant background colour")}><Sparkles size={12} /> {t('Auto')}</button>
       </div>
       <div className="colour-presets">
         {presetColours.map((preset, index) => (
           <Fragment key={preset.color}>
             {/* the note introduces the sampled colours rather than trailing them */}
-            {index === GARMENT_COLOURS.length && <span className="colour-presets-note">for keying a fill</span>}
-            {index === GARMENT_COLOURS.length + KEY_COLOURS.length && <span className="colour-presets-note">from this image</span>}
+            {index === GARMENT_COLOURS.length && <span className="colour-presets-note">{t('for keying a fill')}</span>}
+            {index === GARMENT_COLOURS.length + KEY_COLOURS.length && <span className="colour-presets-note">{t('from this image')}</span>}
             <button
               type="button"
               className={`colour-preset ${background.toLowerCase() === preset.color ? 'active' : ''}`}
               style={{ background: preset.color }}
               onClick={() => chooseBackground(preset.color)}
-              title={`${preset.label} · ${preset.color.toUpperCase()}`}
-              aria-label={`${preset.label} ${preset.color}`}
+              title={`${t(preset.label)} · ${preset.color.toUpperCase()}`}
+              aria-label={`${t(preset.label)} ${preset.color}`}
             />
           </Fragment>
         ))}
@@ -2148,9 +2175,9 @@ function EditorDialog({ image, decision, projectPath, keyStatus, openSettings, o
         setBackground(picked.color)
         setAutomaticBackground(false)
         setSampleMode(null)
-        onNotice(`Picked ${picked.color.toUpperCase()} from the image. It is now the fill and background colour.`)
+        onNotice(t('Picked {colour} from the image. It is now the fill and background colour.', { colour: picked.color.toUpperCase() }))
       } catch (error) {
-        onNotice(`Could not read that pixel: ${errorMessage(error)}`)
+        onNotice(t('Could not read that pixel: {error}', { error: errorMessage(error) }))
       }
       return
     }
@@ -2169,11 +2196,11 @@ function EditorDialog({ image, decision, projectPath, keyStatus, openSettings, o
       // Fill is a click-repeat tool: the zoom and the scroll position the user
       // is working at both survive the revision on their own now.
       addRevision(result)
-      onNotice(sampleMode === 'replace'
-        ? `Replaced that colour with ${background.toUpperCase()} across the whole image · revision ${timeline.index + 1}. Undo remains available.`
-        : `Filled with ${background.toUpperCase()} · revision ${timeline.index + 1}. Undo remains available.`)
+      onNotice(t(sampleMode === 'replace'
+        ? 'Replaced that colour with {colour} across the whole image · revision {n}. Undo remains available.'
+        : 'Filled with {colour} · revision {n}. Undo remains available.', { colour: background.toUpperCase(), n: timeline.index + 1 }))
     } catch (error) {
-      onNotice(`Could not ${sampleMode === 'replace' ? 'replace that colour' : 'fill that area'}: ${errorMessage(error)}`)
+      onNotice(t(sampleMode === 'replace' ? 'Could not replace that colour: {error}' : 'Could not fill that area: {error}', { error: errorMessage(error) }))
     } finally {
       setFilling(false)
     }
@@ -2187,8 +2214,8 @@ function EditorDialog({ image, decision, projectPath, keyStatus, openSettings, o
   const turnQuarter = (delta: number) => {
     setPaintEnabled(false)
     void applyStep(
-      'Turning the image…',
-      (revision) => `Turned 90° ${delta < 0 ? 'left' : 'right'} · revision ${revision}. Undo remains available.`,
+      t('Turning the image…'),
+      (revision) => t(delta < 0 ? 'Turned 90° left · revision {n}. Undo remains available.' : 'Turned 90° right · revision {n}. Undo remains available.', { n: revision }),
       { rotation: delta < 0 ? -90 : 90 },
       () => undefined,
     )
@@ -2228,7 +2255,7 @@ function EditorDialog({ image, decision, projectPath, keyStatus, openSettings, o
       outputThumbnail: decision.outputThumbnail,
       outputQuality: decision.outputQuality,
     }
-    onBusy('Backing up the original and saving the approved image…')
+    onBusy(t('Backing up the original and saving the approved image…'))
     try {
       const committed = await window.moodprep.commitProcessedImage(projectPath, image.path, working.outputPath)
       onUpdate({
@@ -2243,17 +2270,17 @@ function EditorDialog({ image, decision, projectPath, keyStatus, openSettings, o
       onClose()
       onCommitted(image, working)
       onNotice({
-        message: `Saved over ${image.name} — previous version kept in moodprep-originals.`,
+        message: t('Saved over {name} — previous version kept in moodprep-originals.', { name: image.name }),
         action: {
-          label: 'Undo',
+          label: t('Undo'),
           run: async () => {
             try {
               await window.moodprep.revertCommittedImage(projectPath, image.path, committed.backupPath)
               onUpdate(previousDecision)
               onReverted(image)
-              onNotice(`Put ${image.name} back. The saved version was discarded.`)
+              onNotice(t('Put {name} back. The saved version was discarded.', { name: image.name }))
             } catch (error) {
-              onNotice(`Could not undo that save: ${errorMessage(error)}`)
+              onNotice(t('Could not undo that save: {error}', { error: errorMessage(error) }))
             }
           },
         },
@@ -2267,13 +2294,13 @@ function EditorDialog({ image, decision, projectPath, keyStatus, openSettings, o
   const deleteImage = async () => {
     setDeleting(true)
     try {
-      const result = await window.moodprep.deleteImage(projectPath, image.path)
+      const result = await window.moodprep.deleteImage(projectPath, image.path, deletionLabels(t, [image.name]))
       if (!result.deleted) return
       onClose()
       onDeleted(image)
-      onNotice(`${image.name} was moved to Trash. Reference backups were kept.`)
+      onNotice(t('{name} was moved to Trash. Reference backups were kept.', { name: image.name }))
     } catch (error) {
-      onNotice(`Could not delete ${image.name}: ${errorMessage(error)}`)
+      onNotice(t('Could not delete {name}: {error}', { name: image.name, error: errorMessage(error) }))
     } finally {
       setDeleting(false)
     }
@@ -2295,23 +2322,23 @@ function EditorDialog({ image, decision, projectPath, keyStatus, openSettings, o
           textarea.select()
           const copied = document.execCommand('copy')
           textarea.remove()
-          if (!copied) throw new Error('The system clipboard rejected the copy request.')
+          if (!copied) throw new Error(t('The system clipboard rejected the copy request.'))
         }
       }
       setFilenameCopied(true)
       window.setTimeout(() => setFilenameCopied(false), 1800)
-      onNotice(`Copied ${image.name}`)
+      onNotice(t('Copied {name}', { name: image.name }))
     } catch (error) {
-      onNotice(`Could not copy the filename: ${errorMessage(error)}`)
+      onNotice(t('Could not copy the filename: {error}', { error: errorMessage(error) }))
     }
   }
   return (
-    <div className="modal-backdrop editor-backdrop" role="dialog" aria-modal="true" aria-label={`Edit ${image.name}`}>
+    <div className="modal-backdrop editor-backdrop" role="dialog" aria-modal="true" aria-label={t('Edit {name}', { name: image.name })}>
       <div className="editor-dialog">
-        <header><div><span>Processing workbench</span><button type="button" className={`filename-copy ${filenameCopied ? 'copied' : ''}`} onClick={copyFilename} title="Copy full filename" aria-label={`Copy full filename: ${image.name}`}><strong>{image.name}</strong>{filenameCopied ? <><Check size={13} /><em>Copied</em></> : <><Copy size={13} /><em>Copy</em></>}</button></div><button className="icon-button" onClick={onClose}><X size={19} /></button></header>
+        <header><div><span>{t('Processing workbench')}</span><button type="button" className={`filename-copy ${filenameCopied ? 'copied' : ''}`} onClick={copyFilename} title={t('Copy full filename')} aria-label={t('Copy full filename: {name}', { name: image.name })}><strong>{image.name}</strong>{filenameCopied ? <><Check size={13} /><em>{t('Copied')}</em></> : <><Copy size={13} /><em>{t('Copy')}</em></>}</button></div><button className="icon-button" onClick={onClose} aria-label={t('Close')}><X size={19} /></button></header>
         <div className="editor-body">
           <div className="comparison-stage">
-            <div className="compare-label">{peekTarget ? `Before · ${timeline.index - 1 === 0 ? 'original' : `revision ${timeline.index - 1}`}` : timeline.index === 0 ? 'Original' : `Working revision ${timeline.index} of ${timeline.revisions.length - 1}`}</div>
+            <div className="compare-label">{peekTarget ? (timeline.index - 1 === 0 ? t('Before · original') : t('Before · revision {n}', { n: timeline.index - 1 })) : timeline.index === 0 ? t('Original') : t('Working revision {n} of {total}', { n: timeline.index, total: timeline.revisions.length - 1 })}</div>
             <ImageStage
               image={{
                 name: image.name,
@@ -2336,10 +2363,10 @@ function EditorDialog({ image, decision, projectPath, keyStatus, openSettings, o
               onPaint={updatePaintStrokes}
               onStrokeEnd={() => void flushStrokes()}
             />
-            <div className="revision-actions" aria-label="Revision history controls">
-              <button type="button" onClick={undoWorkbench} disabled={paintStrokes.length === 0 && timeline.index === 0} title="Undo (⌘Z)"><Undo2 size={13} /> Undo</button>
-              <button type="button" onClick={redoWorkbench} disabled={paintRedoStrokes.length === 0 && timeline.index >= timeline.revisions.length - 1} title="Redo (⇧⌘Z)"><Redo2 size={13} /> Redo</button>
-              <button type="button" onClick={returnToOriginal} disabled={paintStrokes.length === 0 && paintRedoStrokes.length === 0 && timeline.index === 0}><RotateCcw size={13} /> Return to original</button>
+            <div className="revision-actions" aria-label={t('Revision history controls')}>
+              <button type="button" onClick={undoWorkbench} disabled={paintStrokes.length === 0 && timeline.index === 0} title={t('Undo (⌘Z)')}><Undo2 size={13} /> {t('Undo')}</button>
+              <button type="button" onClick={redoWorkbench} disabled={paintRedoStrokes.length === 0 && timeline.index >= timeline.revisions.length - 1} title={t('Redo (⇧⌘Z)')}><Redo2 size={13} /> {t('Redo')}</button>
+              <button type="button" onClick={returnToOriginal} disabled={paintStrokes.length === 0 && paintRedoStrokes.length === 0 && timeline.index === 0}><RotateCcw size={13} /> {t('Return to original')}</button>
               <button
                 type="button"
                 className={`peek ${peekTarget ? 'active' : ''}`}
@@ -2351,63 +2378,63 @@ function EditorDialog({ image, decision, projectPath, keyStatus, openSettings, o
                 onKeyDown={(event) => { if (event.key === ' ' || event.key === 'Enter') { event.preventDefault(); setPeeking(true) } }}
                 onKeyUp={() => setPeeking(false)}
                 onBlur={() => setPeeking(false)}
-                title="Hold to see the previous revision without changing anything"
-              ><Eye size={13} /> Before</button>
+                title={t('Hold to see the previous revision without changing anything')}
+              ><Eye size={13} /> {t('Before')}</button>
             </div>
-            <div className="stage-zoom-controls" aria-label="Preview zoom controls">
-              <button type="button" onClick={() => setZoom((value) => Math.max(1, value - .25))} disabled={zoom <= 1} aria-label="Zoom out"><ZoomOut size={14} /></button>
-              <button type="button" className="zoom-level" onClick={() => setZoom(1)} title="Fit image to window">{Math.round(zoom * 100)}%</button>
-              <button type="button" onClick={() => setZoom((value) => Math.min(4, value + .25))} disabled={zoom >= 4} aria-label="Zoom in"><ZoomIn size={14} /></button>
+            <div className="stage-zoom-controls" aria-label={t('Preview zoom controls')}>
+              <button type="button" onClick={() => setZoom((value) => Math.max(1, value - .25))} disabled={zoom <= 1} aria-label={t('Zoom out')}><ZoomOut size={14} /></button>
+              <button type="button" className="zoom-level" onClick={() => setZoom(1)} title={t('Fit image to window')}>{Math.round(zoom * 100)}%</button>
+              <button type="button" onClick={() => setZoom((value) => Math.min(4, value + .25))} disabled={zoom >= 4} aria-label={t('Zoom in')}><ZoomIn size={14} /></button>
             </div>
-            <div className="stage-meta"><span>{visibleResult.width} × {visibleResult.height}</span><span>{formatBytes(image.bytes)}</span><span>Quality {visibleResult.quality.score}/100</span></div>
+            <div className="stage-meta"><span>{visibleResult.width} × {visibleResult.height}</span><span>{formatBytes(image.bytes)}</span><span>{t('Quality {score}/100', { score: visibleResult.quality.score })}</span></div>
           </div>
           <div className="editor-controls">
             <section>
-              <div className="control-heading"><span>Issue tags</span><small>Select everything that should change</small></div>
+              <div className="control-heading"><span>{t('Issue tags')}</span><small>{t('Select everything that should change')}</small></div>
               <div className="issue-chips">{ISSUE_TYPES.map((issue) => (
                 <button
                   key={issue}
                   className={`${decision.issues.includes(issue) ? 'active' : ''} ${pendingIssueRemoval === issue ? 'removing' : ''}`}
                   onClick={() => toggleIssue(issue)}
                   aria-pressed={decision.issues.includes(issue)}
-                  title={decision.issues.includes(issue) ? `Remove the ${humanIssue(issue)} tag` : `Tag this image as ${humanIssue(issue)}`}
-                >{decision.issues.includes(issue) && <Check size={12} />}{humanIssue(issue)}</button>
+                  title={t(decision.issues.includes(issue) ? 'Remove the {tag} tag' : 'Tag this image as {tag}', { tag: t(humanIssue(issue)) })}
+                >{decision.issues.includes(issue) && <Check size={12} />}{t(humanIssue(issue))}</button>
               ))}</div>
               {pendingIssueRemoval && (
                 <div className="issue-confirm" role="alert">
                   <CircleAlert size={15} />
-                  <span><strong>Remove the {humanIssue(pendingIssueRemoval)} tag?</strong><small>This records that the issue does not apply to this image.</small></span>
-                  <button type="button" className="issue-confirm-cancel" onClick={() => setPendingIssueRemoval(null)}>Keep it</button>
-                  <button type="button" className="issue-confirm-accept" onClick={confirmIssueRemoval}><Check size={13} /> Remove tag</button>
+                  <span><strong>{t('Remove the {tag} tag?', { tag: t(humanIssue(pendingIssueRemoval)) })}</strong><small>{t('This records that the issue does not apply to this image.')}</small></span>
+                  <button type="button" className="issue-confirm-cancel" onClick={() => setPendingIssueRemoval(null)}>{t('Keep it')}</button>
+                  <button type="button" className="issue-confirm-accept" onClick={confirmIssueRemoval}><Check size={13} /> {t('Remove tag')}</button>
                 </div>
               )}
             </section>
             <section className={`quality-review ${hasModifiedResult && !qualityAccepted ? 'warning' : ''}`}>
-              <div className="control-heading"><span>Revision quality</span><small>Automated signal · verify visually</small></div>
+              <div className="control-heading"><span>{t('Revision quality')}</span><small>{t('Automated signal · verify visually')}</small></div>
               <div className="quality-score-row">
-                <div><small>Original</small><strong>{image.quality.score}</strong></div>
+                <div><small>{t('Original')}</small><strong>{image.quality.score}</strong></div>
                 <ChevronRight size={16} />
-                <div><small>{hasModifiedResult ? 'This revision' : 'Current image'}</small><strong>{working.quality.score}</strong></div>
+                <div><small>{hasModifiedResult ? t('This revision') : t('Current image')}</small><strong>{working.quality.score}</strong></div>
                 {hasModifiedResult && <span className={`quality-delta ${qualityDelta > 0 ? 'positive' : qualityDelta < 0 ? 'negative' : ''}`}>{qualityDelta > 0 ? '+' : ''}{qualityDelta}</span>}
-                <span className={`quality-verdict ${qualityAccepted ? 'ready' : ''}`}>{qualityAccepted ? 'Recommended' : `Below ${QUALITY_RECOMMENDED_SCORE}`}</span>
+                <span className={`quality-verdict ${qualityAccepted ? 'ready' : ''}`}>{qualityAccepted ? t('Recommended') : t('Below {n}', { n: QUALITY_RECOMMENDED_SCORE })}</span>
               </div>
               <div className="quality-detail-columns">
-                <div><strong>What the score noticed</strong><ul>{working.quality.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul></div>
-                <div><strong>Suggested next step</strong><ul>{qualitySuggestions.map((suggestion) => <li key={suggestion}>{suggestion}</li>)}</ul></div>
+                <div><strong>{t('What the score noticed')}</strong><ul>{working.quality.reasons.map((reason) => <li key={reason}>{translateQualityReason(reason, t)}</li>)}</ul></div>
+                <div><strong>{t('Suggested next step')}</strong><ul>{qualitySuggestions.map((suggestion) => <li key={suggestion}>{t(suggestion)}</li>)}</ul></div>
               </div>
               {hasModifiedResult && !qualityAccepted && (
                 <label className="quality-override">
                   <input type="checkbox" checked={qualityOverride} onChange={(event) => setQualityOverride(event.target.checked)} />
-                  <span><strong>Replace despite the warning</strong><small>I inspected the revision and prefer it to the original.</small></span>
+                  <span><strong>{t('Replace despite the warning')}</strong><small>{t('I inspected the revision and prefer it to the original.')}</small></span>
                 </label>
               )}
             </section>
             <section>
-              <div className="control-heading"><span>Precise local tools</span><small>No API call · fully deterministic</small></div>
+              <div className="control-heading"><span>{t('Precise local tools')}</span><small>{t('No API call · fully deterministic')}</small></div>
 
               <div className="tool-group">
-                <div className="tool-group-heading"><span>Canvas tool</span><small>{rotationChanged ? 'Apply or reset the rotation to use these' : 'One at a time, used directly on the preview'}</small></div>
-                <div className="tool-strip" role="group" aria-label="Canvas tool">
+                <div className="tool-group-heading"><span>{t('Canvas tool')}</span><small>{rotationChanged ? t('Apply or reset the rotation to use these') : t('One at a time, used directly on the preview')}</small></div>
+                <div className="tool-strip" role="group" aria-label={t('Canvas tool')}>
                   {CANVAS_TOOLS.map((tool) => {
                     const Icon = tool.icon
                     return (
@@ -2418,10 +2445,10 @@ function EditorDialog({ image, decision, projectPath, keyStatus, openSettings, o
                         onClick={() => selectTool(tool.id)}
                         aria-pressed={activeTool === tool.id}
                         disabled={rotationChanged || ((tool.id === 'fill' || tool.id === 'replace') && filling)}
-                        title={rotationChanged ? 'Apply or reset the rotation first' : tool.hint}
+                        title={rotationChanged ? t('Apply or reset the rotation first') : t(tool.hint)}
                       >
                         {(tool.id === 'fill' || tool.id === 'replace') && filling && activeTool === tool.id ? <LoaderCircle className="spin" size={16} /> : <Icon size={16} />}
-                        <span>{tool.label}</span>
+                        <span>{t(tool.label)}</span>
                       </button>
                     )
                   })}
@@ -2430,8 +2457,8 @@ function EditorDialog({ image, decision, projectPath, keyStatus, openSettings, o
                 {activeTool === 'crop' && (
                   <div className="tool-options">
                     <div className="tool-options-row">
-                      <span className="tool-note">Drag the frame’s edges, corners, or centre.</span>
-                      <button type="button" className="tool-reset" onClick={() => { setCrop(EMPTY_CROP); }} disabled={Object.values(crop).every((value) => value === 0)}><RotateCcw size={12} /> Reset</button>
+                      <span className="tool-note">{t('Drag the frame’s edges, corners, or centre.')}</span>
+                      <button type="button" className="tool-reset" onClick={() => { setCrop(EMPTY_CROP); }} disabled={Object.values(crop).every((value) => value === 0)}><RotateCcw size={12} /> {t('Reset')}</button>
                     </div>
                     <button
                       type="button"
@@ -2444,29 +2471,29 @@ function EditorDialog({ image, decision, projectPath, keyStatus, openSettings, o
                         if (next) setCrop((frame) => squareCropInsets(frame, working.width, working.height, []))
                         return next
                       })}
-                      title="Constrain the crop frame to a perfect square"
+                      title={t('Constrain the crop frame to a perfect square')}
                     >
-                      <Ratio size={13} /> <span>1:1 square</span><b>{squareCrop ? 'On' : 'Off'}</b>
+                      <Ratio size={13} /> <span>{t('1:1 square')}</span><b>{squareCrop ? t('On') : t('Off')}</b>
                     </button>
-                    <div className="crop-values" aria-label="Crop margins">
+                    <div className="crop-values" aria-label={t('Crop margins')}>
                       <span>L <b>{Math.round(crop.left)}%</b></span>
                       <span>R <b>{Math.round(crop.right)}%</b></span>
                       <span>T <b>{Math.round(crop.top)}%</b></span>
                       <span>B <b>{Math.round(crop.bottom)}%</b></span>
                     </div>
-                    <span className="crop-size">Output {(() => { const size = cropPixelSize(crop, working.width, working.height, squareCrop); return `${size.width} × ${size.height} px` })()}</span>
-                    <button type="button" className="apply-step" onClick={applyCrop} disabled={!cropPending}>Apply crop</button>
+                    <span className="crop-size">{t('Output {size}', { size: (() => { const size = cropPixelSize(crop, working.width, working.height, squareCrop); return `${size.width} × ${size.height} px` })() })}</span>
+                    <button type="button" className="apply-step" onClick={applyCrop} disabled={!cropPending}>{t('Apply crop')}</button>
                   </div>
                 )}
 
                 {activeTool === 'paint' && (
                   <div className="tool-options">
-                    <label className="tool-slider">Brush <input type="range" min="0" max={BRUSH_SLIDER_STEPS} step="1" value={brushSliderPosition(brushSize, working.width, working.height)} onChange={(event) => setBrushSize(brushSizeFromPixels(brushPixelsFromSlider(Number(event.target.value), working.width, working.height), working.width, working.height))} aria-label="Background paint brush size in source pixels" /><b>{brushPixelsFromSize(brushSize, working.width, working.height)} px</b></label>
+                    <label className="tool-slider">{t('Brush')} <input type="range" min="0" max={BRUSH_SLIDER_STEPS} step="1" value={brushSliderPosition(brushSize, working.width, working.height)} onChange={(event) => setBrushSize(brushSizeFromPixels(brushPixelsFromSlider(Number(event.target.value), working.width, working.height), working.width, working.height))} aria-label={t('Background paint brush size in source pixels')} /><b>{brushPixelsFromSize(brushSize, working.width, working.height)} px</b></label>
                     <div className="tool-options-row">
-                      <span className="tool-note">Paints with the working colour below. Each stroke lands as you lift the brush and Undo takes back one stroke at a time, so there is nothing to apply. Sized in source pixels, from {BRUSH_MIN_PIXELS} to {brushMaxPixels(working.width, working.height)}; below about nine screen pixels the brush shows a crosshair instead of a ring.</span>
-                      <div className="brush-shapes" role="group" aria-label="Background paint brush shape">
-                        <button type="button" className={brushShape === 'circle' ? 'active' : ''} onClick={() => setBrushShape('circle')} aria-pressed={brushShape === 'circle'} title="Circle brush"><Circle size={12} /> Circle</button>
-                        <button type="button" className={brushShape === 'square' ? 'active' : ''} onClick={() => setBrushShape('square')} aria-pressed={brushShape === 'square'} title="Square brush"><Square size={12} /> Square</button>
+                      <span className="tool-note">{t('Paints with the working colour below. Each stroke lands as you lift the brush and Undo takes back one stroke at a time, so there is nothing to apply. Sized in source pixels, from {min} to {max}; below about nine screen pixels the brush shows a crosshair instead of a ring.', { min: BRUSH_MIN_PIXELS, max: brushMaxPixels(working.width, working.height) })}</span>
+                      <div className="brush-shapes" role="group" aria-label={t('Background paint brush shape')}>
+                        <button type="button" className={brushShape === 'circle' ? 'active' : ''} onClick={() => setBrushShape('circle')} aria-pressed={brushShape === 'circle'} title={t('Circle brush')}><Circle size={12} /> {t('Circle')}</button>
+                        <button type="button" className={brushShape === 'square' ? 'active' : ''} onClick={() => setBrushShape('square')} aria-pressed={brushShape === 'square'} title={t('Square brush')}><Square size={12} /> {t('Square')}</button>
                       </div>
                     </div>
                   </div>
@@ -2474,26 +2501,26 @@ function EditorDialog({ image, decision, projectPath, keyStatus, openSettings, o
 
                 {activeTool === 'pick' && (
                   <div className="tool-options">
-                    <span className="tool-note">Click the preview to take that pixel’s colour. It becomes the working colour below.</span>
+                    <span className="tool-note">{t('Click the preview to take that pixel’s colour. It becomes the working colour below.')}</span>
                   </div>
                 )}
 
                 {activeTool === 'replace' && (
                   <div className="tool-options">
-                    <label className="tool-slider">Match <input type="range" min="1" max="60" step="1" value={fillTolerance} onChange={(event) => setFillTolerance(Number(event.target.value))} aria-label="Replace colour match tolerance" /><b>{fillTolerance}%</b></label>
-                    <span className="tool-note">Click any colour to swap it for the working colour <strong>everywhere in the image</strong>, including pockets the bucket cannot reach. Soft edges are eased across, so lettering stays clean.</span>
+                    <label className="tool-slider">{t('Match')} <input type="range" min="1" max="60" step="1" value={fillTolerance} onChange={(event) => setFillTolerance(Number(event.target.value))} aria-label={t('Replace colour match tolerance')} /><b>{fillTolerance}%</b></label>
+                    <span className="tool-note">{t('Click any colour to swap it for the working colour ')}<strong>{t('everywhere in the image')}</strong>{t(', including pockets the bucket cannot reach. Soft edges are eased across, so lettering stays clean.')}</span>
                   </div>
                 )}
                 {activeTool === 'fill' && (
                   <div className="tool-options">
-                    <label className="tool-slider">Match <input type="range" min="1" max="60" step="1" value={fillTolerance} onChange={(event) => setFillTolerance(Number(event.target.value))} aria-label="Fill colour match tolerance" /><b>{fillTolerance}%</b></label>
-                    <span className="tool-note">Click an area to flood it with the working colour. Each fill is its own revision, so ⌘Z steps back one fill.</span>
+                    <label className="tool-slider">{t('Match')} <input type="range" min="1" max="60" step="1" value={fillTolerance} onChange={(event) => setFillTolerance(Number(event.target.value))} aria-label={t('Fill colour match tolerance')} /><b>{fillTolerance}%</b></label>
+                    <span className="tool-note">{t('Click an area to flood it with the working colour. Each fill is its own revision, so ⌘Z steps back one fill.')}</span>
                   </div>
                 )}
               </div>
 
               <div className="tool-group">
-                <div className="tool-group-heading"><span>Working colour</span><small>Paint, fill, straighten canvas &amp; centring</small></div>
+                <div className="tool-group-heading"><span>{t('Working colour')}</span><small>{t('Paint, fill, straighten canvas & centring')}</small></div>
                 {colourControls()}
               </div>
 
@@ -2502,61 +2529,61 @@ function EditorDialog({ image, decision, projectPath, keyStatus, openSettings, o
                 onFocusCapture={() => setStraightening(true)}
                 onBlurCapture={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setStraightening(false) }}
               >
-                <div className="tool-group-heading"><span>Straighten</span><small>±{ROTATION_LIMIT}° · quarter turns apply at once</small></div>
+                <div className="tool-group-heading"><span>{t('Straighten')}</span><small>{t('±{n}° · quarter turns apply at once', { n: ROTATION_LIMIT })}</small></div>
                 <div className="rotation-tool">
-                  <input type="range" min={-ROTATION_LIMIT} max={ROTATION_LIMIT} step="0.1" value={rotation} onChange={(event) => setRotationDegrees(Number(event.target.value))} aria-label="Image rotation in degrees" />
-                  <label className="rotation-value"><input type="number" min={-ROTATION_LIMIT} max={ROTATION_LIMIT} step="0.1" value={rotation.toFixed(1)} onChange={(event) => setRotationDegrees(Number(event.target.value))} aria-label="Rotation degrees" /><span>°</span></label>
-                  <button type="button" className="rotation-auto" onClick={useAutomaticRotation} disabled={rotationDetecting} aria-label="Detect the rotation that levels the artwork" title="Detect the rotation that levels the artwork">{rotationDetecting ? <LoaderCircle className="spin" size={12} /> : <Sparkles size={12} />} Auto</button>
+                  <input type="range" min={-ROTATION_LIMIT} max={ROTATION_LIMIT} step="0.1" value={rotation} onChange={(event) => setRotationDegrees(Number(event.target.value))} aria-label={t('Image rotation in degrees')} />
+                  <label className="rotation-value"><input type="number" min={-ROTATION_LIMIT} max={ROTATION_LIMIT} step="0.1" value={rotation.toFixed(1)} onChange={(event) => setRotationDegrees(Number(event.target.value))} aria-label={t('Rotation degrees')} /><span>°</span></label>
+                  <button type="button" className="rotation-auto" onClick={useAutomaticRotation} disabled={rotationDetecting} aria-label={t('Detect the rotation that levels the artwork')} title={t('Detect the rotation that levels the artwork')}>{rotationDetecting ? <LoaderCircle className="spin" size={12} /> : <Sparkles size={12} />} {t('Auto')}</button>
                 </div>
                 <div className="rotation-quarters">
-                  <button type="button" onClick={() => turnQuarter(-1)} aria-label="Rotate 90 degrees left" title="Rotate 90° left"><RotateCcw size={13} /> 90°</button>
-                  <button type="button" onClick={() => turnQuarter(1)} aria-label="Rotate 90 degrees right" title="Rotate 90° right"><RotateCw size={13} /> 90°</button>
-                  <button type="button" className="rotation-reset" onClick={resetRotation} disabled={!rotationChanged} aria-label="Reset image rotation" title="Reset rotation"><RotateCcw size={13} /></button>
+                  <button type="button" onClick={() => turnQuarter(-1)} aria-label={t('Rotate 90 degrees left')} title={t('Rotate 90° left')}><RotateCcw size={13} /> 90°</button>
+                  <button type="button" onClick={() => turnQuarter(1)} aria-label={t('Rotate 90 degrees right')} title={t('Rotate 90° right')}><RotateCw size={13} /> 90°</button>
+                  <button type="button" className="rotation-reset" onClick={resetRotation} disabled={!rotationChanged} aria-label={t('Reset image rotation')} title={t('Reset rotation')}><RotateCcw size={13} /></button>
                 </div>
-                <button type="button" className="apply-step" onClick={applyStraighten} disabled={!rotationChanged}>Apply rotation</button>
+                <button type="button" className="apply-step" onClick={applyStraighten} disabled={!rotationChanged}>{t('Apply rotation')}</button>
               </div>
 
               <div className="tool-group">
-                <div className="tool-group-heading"><span>Adjustments</span><small>Tick what you want, then apply</small></div>
-                <label className="adjust-row" title={paintEnabled ? 'Turn off Paint before using Auto-trim' : undefined}>
+                <div className="tool-group-heading"><span>{t('Adjustments')}</span><small>{t('Tick what you want, then apply')}</small></div>
+                <label className="adjust-row" title={paintEnabled ? t('Turn off Paint before using Auto-trim') : undefined}>
                   <input type="checkbox" checked={trim} onChange={(event) => setTrim(event.target.checked)} disabled={paintEnabled} />
-                  <span><strong>Auto-trim border</strong><small>Cut away blank surrounding margin</small></span>
+                  <span><strong>{t('Auto-trim border')}</strong><small>{t('Cut away blank surrounding margin')}</small></span>
                 </label>
-                <label className="adjust-row" title={paintEnabled ? 'Turn off Paint before centring content' : undefined}>
+                <label className="adjust-row" title={paintEnabled ? t('Turn off Paint before centring content') : undefined}>
                   <input type="checkbox" checked={center} onChange={(event) => setCenter(event.target.checked)} disabled={paintEnabled} />
-                  <span><strong>Centre content</strong><small>Even margins in the working colour</small></span>
+                  <span><strong>{t('Centre content')}</strong><small>{t('Even margins in the working colour')}</small></span>
                 </label>
                 <label className="adjust-row">
                   <input type="checkbox" checked={borderOn} onChange={(event) => setBorderOn(event.target.checked)} />
-                  <span><strong>Add border</strong><small>Frame the artwork in the working colour</small></span>
+                  <span><strong>{t('Add border')}</strong><small>{t('Frame the artwork in the working colour')}</small></span>
                 </label>
                 {borderOn && (() => {
                   const edge = borderPixels(borderWidth, working.width, working.height)
                   const framed = borderedSize(working.width, working.height, borderWidth)
                   return (
                     <div className="tool-options">
-                      <label className="tool-slider">Width <input type="range" min={Math.round(BORDER_MIN * 1000)} max={Math.round(BORDER_MAX * 1000)} step="1" value={Math.round(borderWidth * 1000)} onChange={(event) => setBorderWidth(clampBorder(Number(event.target.value) / 1000))} aria-label="Border width" /><b>{edge} px</b></label>
-                      <span className="tool-note">Added outside the artwork in the working colour, so nothing is covered and the saved image becomes {framed.width} × {framed.height} px. The width is a share of the shorter edge ({(borderWidth * 100).toFixed(1)}%), so it keeps its proportion if the image is cropped or upscaled.</span>
+                      <label className="tool-slider">{t('Width')} <input type="range" min={Math.round(BORDER_MIN * 1000)} max={Math.round(BORDER_MAX * 1000)} step="1" value={Math.round(borderWidth * 1000)} onChange={(event) => setBorderWidth(clampBorder(Number(event.target.value) / 1000))} aria-label={t('Border width')} /><b>{edge} px</b></label>
+                      <span className="tool-note">{t('Added outside the artwork in the working colour, so nothing is covered and the saved image becomes {width} × {height} px. The width is a share of the shorter edge ({share}%), so it keeps its proportion if the image is cropped or upscaled.', { width: framed.width, height: framed.height, share: (borderWidth * 100).toFixed(1) })}</span>
                     </div>
                   )
                 })()}
                 <label className="adjust-row">
                   <input type="checkbox" checked={swapBackdropOn} onChange={(event) => setSwapBackdropOn(event.target.checked)} />
-                  <span><strong>Replace backdrop</strong><small>Put the cut-out on the working colour, edges and all</small></span>
+                  <span><strong>{t('Replace backdrop')}</strong><small>{t('Put the cut-out on the working colour, edges and all')}</small></span>
                 </label>
                 {swapBackdropOn && (
                   <div className="tool-options">
-                    <label className="tool-slider">Match <input type="range" min="1" max="60" step="1" value={Math.round(backdropTolerance * 100)} onChange={(event) => setBackdropTolerance(Number(event.target.value) / 100)} aria-label="Backdrop match tolerance" /><b>{Math.round(backdropTolerance * 100)}%</b></label>
-                    <span className="tool-note">Swaps the flat surround the reconstruction produced for the working colour below. Unlike Fill, the blended pixels along the edge are re-composited onto the new colour rather than left behind, so there is no line to paint over. Only the surround connected to the frame is touched — a dark area enclosed by the artwork stays put.</span>
+                    <label className="tool-slider">{t('Match')} <input type="range" min="1" max="60" step="1" value={Math.round(backdropTolerance * 100)} onChange={(event) => setBackdropTolerance(Number(event.target.value) / 100)} aria-label={t('Backdrop match tolerance')} /><b>{Math.round(backdropTolerance * 100)}%</b></label>
+                    <span className="tool-note">{t('Swaps the flat surround the reconstruction produced for the working colour below. Unlike Fill, the blended pixels along the edge are re-composited onto the new colour rather than left behind, so there is no line to paint over. Only the surround connected to the frame is touched — a dark area enclosed by the artwork stays put.')}</span>
                   </div>
                 )}
                 <label className="adjust-row">
                   <input type="checkbox" checked={recolour} onChange={(event) => setRecolour(event.target.checked)} />
-                  <span><strong>Recolour</strong><small>Same hues, new shades — a red stays a red</small></span>
+                  <span><strong>{t('Recolour')}</strong><small>{t('Same hues, new shades — a red stays a red')}</small></span>
                 </label>
                 {recolour && (
                   <div className="tool-options">
-                    <div className="recolour-variations" role="group" aria-label="Recolour variation">
+                    <div className="recolour-variations" role="group" aria-label={t('Recolour variation')}>
                       {Array.from({ length: RECOLOUR_VARIATIONS }, (_, index) => index + 1).map((variation) => (
                         <button
                           key={variation}
@@ -2564,57 +2591,57 @@ function EditorDialog({ image, decision, projectPath, keyStatus, openSettings, o
                           className={recolourVariation === variation ? 'active' : ''}
                           onClick={() => setRecolourVariation(variation)}
                           aria-pressed={recolourVariation === variation}
-                          aria-label={`Recolour variation ${variation}`}
+                          aria-label={t('Recolour variation {n}', { n: variation })}
                         >{variation}</button>
                       ))}
                     </div>
-                    <label className="tool-slider">Shift <input type="range" min="5" max="100" step="5" value={Math.round(recolourAmount * 100)} onChange={(event) => setRecolourAmount(Number(event.target.value) / 100)} aria-label="Recolour shift amount" /><b>{Math.round(recolourAmount * 100)}%</b></label>
-                    <span className="tool-note">Every hue moves to a different shade of itself and never past its neighbour, so the design keeps its colour relationships. Blacks, whites, greys and the background are left alone. Each variation is a fixed scheme, so the same number always gives the same result.</span>
+                    <label className="tool-slider">{t('Shift')} <input type="range" min="5" max="100" step="5" value={Math.round(recolourAmount * 100)} onChange={(event) => setRecolourAmount(Number(event.target.value) / 100)} aria-label={t('Recolour shift amount')} /><b>{Math.round(recolourAmount * 100)}%</b></label>
+                    <span className="tool-note">{t('Every hue moves to a different shade of itself and never past its neighbour, so the design keeps its colour relationships. Blacks, whites, greys and the background are left alone. Each variation is a fixed scheme, so the same number always gives the same result.')}</span>
                   </div>
                 )}
                 <label className="adjust-row">
                   <input type="checkbox" checked={flattenPalette} onChange={(event) => setFlattenPalette(event.target.checked)} />
-                  <span><strong>Flatten colour noise</strong><small>Detect intended colours; ignore compression</small>{flattenPalette && paletteAnalysis && <span className="palette-detection"><span className="palette-swatches" aria-hidden="true">{paletteAnalysis.swatches.map((swatch, index) => <i key={`${swatch}-${index}`} style={{ background: swatch }} />)}</span>{paletteAnalysis.recommendedColors} colours detected</span>}</span>
+                  <span><strong>{t('Flatten colour noise')}</strong><small>{t('Detect intended colours; ignore compression')}</small>{flattenPalette && paletteAnalysis && <span className="palette-detection"><span className="palette-swatches" aria-hidden="true">{paletteAnalysis.swatches.map((swatch, index) => <i key={`${swatch}-${index}`} style={{ background: swatch }} />)}</span>{t('{n} colours detected', { n: paletteAnalysis.recommendedColors })}</span>}</span>
                   <PaletteCountPicker value={paletteMode} onChange={setPaletteMode} analysis={paletteAnalysis} detecting={paletteDetecting} disabled={!flattenPalette} />
                 </label>
-                <button type="button" className="apply-step" onClick={applyAdjustments} disabled={!adjustmentsPending}>Apply adjustments</button>
+                <button type="button" className="apply-step" onClick={applyAdjustments} disabled={!adjustmentsPending}>{t('Apply adjustments')}</button>
               </div>
 
               <div className="tool-group">
-                <div className="tool-group-heading"><span>Output</span><small>Applies to the saved revision</small></div>
+                <div className="tool-group-heading"><span>{t('Output')}</span><small>{t('Applies to the saved revision')}</small></div>
                 <div className="output-row">
-                  <label>Resize <select value={upscale} onChange={(event) => setUpscale(Number(event.target.value))}><option value="1">Original</option><option value="2">2×</option><option value="4">4×</option></select></label>
-                  <label>Format <select value={format} onChange={(event) => setFormat(event.target.value as typeof format)}><option value="png">PNG</option><option value="jpeg">JPG</option><option value="webp">WebP</option></select></label>
+                  <label>{t('Resize')} <select value={upscale} onChange={(event) => setUpscale(Number(event.target.value))}><option value="1">{t('Original')}</option><option value="2">2×</option><option value="4">4×</option></select></label>
+                  <label>{t('Format')} <select value={format} onChange={(event) => setFormat(event.target.value as typeof format)}><option value="png">PNG</option><option value="jpeg">JPG</option><option value="webp">WebP</option></select></label>
                 </div>
-                <button type="button" className="apply-step" onClick={applyOutput} disabled={upscale === 1}>Apply resize</button>
-                <span className="tool-note">Format is not an operation: it is how the next revision you apply gets encoded, whichever group applies it.</span>
+                <button type="button" className="apply-step" onClick={applyOutput} disabled={upscale === 1}>{t('Apply resize')}</button>
+                <span className="tool-note">{t('Format is not an operation: it is how the next revision you apply gets encoded, whichever group applies it.')}</span>
               </div>
             </section>
             <section className="ai-section">
-              <div className="control-heading"><span><Sparkles size={15} /> Gemini reconstruction</span><small>Best for texture, perspective and difficult backgrounds</small></div>
-              <div className="gemini-presets" aria-label="Gemini reconstruction preset">
-                {GEMINI_PRESETS.map((preset) => <button key={preset.id} type="button" className={geminiPreset === preset.id ? 'active' : ''} onClick={() => chooseGeminiPreset(preset.id)} aria-pressed={geminiPreset === preset.id}>{preset.label}</button>)}
+              <div className="control-heading"><span><Sparkles size={15} /> {t('Gemini reconstruction')}</span><small>{t('Best for texture, perspective and difficult backgrounds')}</small></div>
+              <div className="gemini-presets" aria-label={t('Gemini reconstruction preset')}>
+                {GEMINI_PRESETS.map((preset) => <button key={preset.id} type="button" className={geminiPreset === preset.id ? 'active' : ''} onClick={() => chooseGeminiPreset(preset.id)} aria-pressed={geminiPreset === preset.id}>{t(preset.label)}</button>)}
               </div>
               <div className="gemini-preset-description">
-                <span>{authored && geminiPreset === 'custom' ? 'Written for this image from what the model can see in it.' : GEMINI_PRESETS.find((preset) => preset.id === geminiPreset)?.description}</span>
-                <button type="button" className="write-prompt" onClick={writePromptForImage} disabled={authoring || !keyStatus.gemini} title={keyStatus.gemini ? 'Look at this image and write a prompt for its own faults and peculiarities' : 'Add a Gemini API key in Settings first'}>
-                  {authoring ? <><LoaderCircle className="spin" size={12} /> Reading the image…</> : <><Sparkles size={12} /> Write a prompt for this image</>}
+                <span>{authored && geminiPreset === 'custom' ? t('Written for this image from what the model can see in it.') : t(GEMINI_PRESETS.find((preset) => preset.id === geminiPreset)?.description ?? '')}</span>
+                <button type="button" className="write-prompt" onClick={writePromptForImage} disabled={authoring || !keyStatus.gemini} title={keyStatus.gemini ? t('Look at this image and write a prompt for its own faults and peculiarities') : t('Add a Gemini API key in Settings first')}>
+                  {authoring ? <><LoaderCircle className="spin" size={12} /> {t('Reading the image…')}</> : <><Sparkles size={12} /> {t('Write a prompt for this image')}</>}
                 </button>
               </div>
-              <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={7} aria-label="Gemini reconstruction prompt" placeholder={geminiPreset === 'custom' ? 'Describe exactly what you want Gemini to do with the current image…' : undefined} />
+              <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={7} aria-label={t('Gemini reconstruction prompt')} placeholder={geminiPreset === 'custom' ? t('Describe exactly what you want Gemini to do with the current image…') : undefined} />
               <div className="ai-model-row">
-                <select value={aiModel} onChange={(event) => setAiModel(event.target.value)} aria-label="Reconstruction model">
-                  {modelsForSize(imageSize).map((model) => <option key={model.id} value={model.id}>{PROVIDER_LABELS[model.provider]} · {model.label}{keyStatus[model.provider] ? '' : ' (no key)'}</option>)}
+                <select value={aiModel} onChange={(event) => setAiModel(event.target.value)} aria-label={t('Reconstruction model')}>
+                  {modelsForSize(imageSize).map((model) => <option key={model.id} value={model.id}>{PROVIDER_LABELS[model.provider]} · {t(model.label)}{keyStatus[model.provider] ? '' : t(' (no key)')}</option>)}
                 </select>
-                <div className="ai-backdrops" role="radiogroup" aria-label="Backdrop colour" title={geminiPreset === 'outpaint' ? 'Complete edges continues the artwork\u2019s own background, so it sets no backdrop' : geminiPreset === 'edges' ? 'Clean edges changes nothing but the fringe, so it sets no backdrop' : geminiPreset === 'concentric' ? 'Even the border only moves a shape, so it sets no backdrop' : 'The colour the artwork is put on'}>
+                <div className="ai-backdrops" role="radiogroup" aria-label={t('Backdrop colour')} title={geminiPreset === 'outpaint' ? t('Complete edges continues the artwork’s own background, so it sets no backdrop') : geminiPreset === 'edges' ? t('Clean edges changes nothing but the fringe, so it sets no backdrop') : geminiPreset === 'concentric' ? t('Even the border only moves a shape, so it sets no backdrop') : t('The colour the artwork is put on')}>
                   {AI_BACKDROPS.map((backdrop) => (
                     <button
                       key={backdrop.id}
                       type="button"
                       role="radio"
                       aria-checked={aiBackdrop === backdrop.id}
-                      aria-label={backdrop.label}
-                      title={backdrop.id === 'none' ? 'Say nothing about the background — leave it to the preset' : backdrop.label}
+                      aria-label={t(backdrop.label)}
+                      title={backdrop.id === 'none' ? t('Say nothing about the background — leave it to the preset') : t(backdrop.label)}
                       className={`ai-backdrop ${backdrop.swatch === null ? 'none' : backdrop.swatch === 'auto' ? 'auto' : ''} ${aiBackdrop === backdrop.id ? 'active' : ''}`}
                       style={backdrop.swatch && backdrop.swatch !== 'auto' ? { background: backdrop.swatch } : undefined}
                       disabled={geminiPreset === 'outpaint' || geminiPreset === 'custom' || geminiPreset === 'edges' || geminiPreset === 'concentric'}
@@ -2622,31 +2649,32 @@ function EditorDialog({ image, decision, projectPath, keyStatus, openSettings, o
                     >{backdrop.swatch === 'auto' ? <Sparkles size={12} /> : null}</button>
                   ))}
                 </div>
-                <small>{chosenModel.note}</small>
+                <small>{t(chosenModel.note)}</small>
               </div>
-              <div className="ai-actions"><select value={imageSize} onChange={(event) => chooseImageSize(event.target.value as ImageSize)} aria-label="Output size">{sizeChoices.map((size) => <option key={size} value={size}>{size}</option>)}</select><button className="ai-button" onClick={runGemini} disabled={modelReady && prompt.trim().length < 12} title={modelReady && prompt.trim().length < 12 ? 'Enter a custom prompt first' : undefined}>{modelReady ? <><Sparkles size={16} /> Reconstruct with {PROVIDER_LABELS[chosenModel.provider]}</> : <><KeyRound size={16} /> Add {PROVIDER_LABELS[chosenModel.provider]} key</>}</button></div>
-              {geminiPreset === 'outpaint' && <p className="gemini-mode-note"><Sparkles size={13} /> MoodPrep will add matching canvas only on sides where artwork touches the edge.</p>}
-              {geminiPreset === 'coaster' && <p className="gemini-mode-note"><Sparkles size={13} /> Pads the photo out to a square first, so even a steeply angled shot returns as a true circle rather than an ellipse. Rings are trued up to one shared centre, so an inner disc that was printed off-register comes back even all the way round rather than faithfully lopsided. Clears age spots and board texture while de-yellowing only the paper, so vermilion and coral inks stay vivid instead of settling into plain red. {aiBackdrop === 'none' ? 'Names no backdrop colour, so the model is not asked to change one; pick a square beside the model menu to set it, or swap it later with Replace.' : `Puts the mat on ${backdropById(aiBackdrop).label.toLowerCase()} \u2014 swap that for any colour later with Replace.`} The result is square; raise the output to 4K, or apply Resize afterwards, for large prints.</p>}
-              {geminiPreset === 'reimagine' && <p className="gemini-mode-note"><Sparkles size={13} /> This intentionally creates new wording and non-identical imagery while keeping the design’s essence.</p>}
-              <p>Generated edits can alter text. Always compare spelling, proportions and line work before accepting.</p>
+              <div className="ai-actions"><select value={imageSize} onChange={(event) => chooseImageSize(event.target.value as ImageSize)} aria-label={t('Output size')}>{sizeChoices.map((size) => <option key={size} value={size}>{size}</option>)}</select><button className="ai-button" onClick={runGemini} disabled={modelReady && prompt.trim().length < 12} title={modelReady && prompt.trim().length < 12 ? t('Enter a custom prompt first') : undefined}>{modelReady ? <><Sparkles size={16} /> {t('Reconstruct with {provider}', { provider: PROVIDER_LABELS[chosenModel.provider] })}</> : <><KeyRound size={16} /> {t('Add {provider} key', { provider: PROVIDER_LABELS[chosenModel.provider] })}</>}</button></div>
+              {geminiPreset === 'outpaint' && <p className="gemini-mode-note"><Sparkles size={13} /> {t('MoodPrep will add matching canvas only on sides where artwork touches the edge.')}</p>}
+              {geminiPreset === 'coaster' && <p className="gemini-mode-note"><Sparkles size={13} /> {t('Pads the photo out to a square first, so even a steeply angled shot returns as a true circle rather than an ellipse. Rings are trued up to one shared centre, so an inner disc that was printed off-register comes back even all the way round rather than faithfully lopsided. Clears age spots and board texture while de-yellowing only the paper, so vermilion and coral inks stay vivid instead of settling into plain red.')} {aiBackdrop === 'none' ? t('Names no backdrop colour, so the model is not asked to change one; pick a square beside the model menu to set it, or swap it later with Replace.') : t('Puts the mat on {colour} — swap that for any colour later with Replace.', { colour: t(backdropById(aiBackdrop).label).toLowerCase() })} {t('The result is square; raise the output to 4K, or apply Resize afterwards, for large prints.')}</p>}
+              {geminiPreset === 'reimagine' && <p className="gemini-mode-note"><Sparkles size={13} /> {t('This intentionally creates new wording and non-identical imagery while keeping the design’s essence.')}</p>}
+              <p>{t('Generated edits can alter text. Always compare spelling, proportions and line work before accepting.')}</p>
             </section>
           </div>
         </div>
         <footer className="editor-footer">
-          <button className="duplicate-image-button" onClick={() => onDuplicated(image)} title="Add a second copy of this image to the folder so it can be worked on differently"><CopyPlus size={15} /> Duplicate</button>
-          <button className="delete-image-button" onClick={deleteImage} disabled={deleting}>{deleting ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />} Delete image…</button>
+          <button className="duplicate-image-button" onClick={() => onDuplicated(image)} title={t('Add a second copy of this image to the folder so it can be worked on differently')}><CopyPlus size={15} /> {t('Duplicate')}</button>
+          <button className="delete-image-button" onClick={deleteImage} disabled={deleting}>{deleting ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />} {t('Delete image…')}</button>
           <div className={`quality-gate ${hasModifiedResult && !qualityAccepted && !qualityOverride ? 'blocked' : ''}`}>
-            {hasModifiedResult ? qualityAccepted ? <><Check size={14} /><span>{working.quality.score}/100 · recommended</span></> : qualityOverride ? <><CircleAlert size={14} /><span>{working.quality.score}/100 · override acknowledged</span></> : <><CircleAlert size={14} /><span>{working.quality.score}/100 · review warning above</span></> : <span>Apply a change to create a revision</span>}
+            {hasModifiedResult ? qualityAccepted ? <><Check size={14} /><span>{t('{score}/100 · recommended', { score: working.quality.score })}</span></> : qualityOverride ? <><CircleAlert size={14} /><span>{t('{score}/100 · override acknowledged', { score: working.quality.score })}</span></> : <><CircleAlert size={14} /><span>{t('{score}/100 · review warning above', { score: working.quality.score })}</span></> : <span>{t('Apply a change to create a revision')}</span>}
           </div>
-          <button className="text-button" onClick={onClose}>Cancel</button>
-          <button className="primary-button" disabled={!hasModifiedResult || !qualityCanReplace} onClick={acceptWorking} title={hasModifiedResult && !qualityAccepted && !qualityOverride ? 'Review and acknowledge the quality warning first' : undefined}><Check size={16} /> {qualityOverride ? 'Replace with warning' : 'Replace original'}</button>
+          <button className="text-button" onClick={onClose}>{t('Cancel')}</button>
+          <button className="primary-button" disabled={!hasModifiedResult || !qualityCanReplace} onClick={acceptWorking} title={hasModifiedResult && !qualityAccepted && !qualityOverride ? t('Review and acknowledge the quality warning first') : undefined}><Check size={16} /> {qualityOverride ? t('Replace with warning') : t('Replace original')}</button>
         </footer>
       </div>
     </div>
   )
 }
 
-function SettingsDialog({ keyStatus, onStatus, onClose }: { keyStatus: Record<AiProvider, boolean>; onStatus: (status: Record<AiProvider, boolean>) => void; onClose: () => void }) {
+function SettingsDialog({ keyStatus, onStatus, language, onLanguage, onClose }: { keyStatus: Record<AiProvider, boolean>; onStatus: (status: Record<AiProvider, boolean>) => void; language: Language; onLanguage: (language: Language) => void; onClose: () => void }) {
+  const { t } = useLanguage()
   // One panel per provider rather than one key field: the models come from two
   // companies, the keys are not interchangeable, and either can be connected on
   // its own. Local tools need neither.
@@ -2685,42 +2713,55 @@ function SettingsDialog({ keyStatus, onStatus, onClose }: { keyStatus: Record<Ai
     finally { setSaving(false) }
   }
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Settings">
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label={t('Settings')}>
       <div className="settings-dialog">
-        <header><div><span><KeyRound size={18} /></span><div><strong>Reconstruction connections</strong><small>Optional · used only for edits you trigger</small></div></div><button className="icon-button" onClick={onClose}><X size={18} /></button></header>
+        <header><div><span><KeyRound size={18} /></span><div><strong>{t('Settings')}</strong><small>{t('Language, and the optional reconstruction connections')}</small></div></div><button className="icon-button" onClick={onClose} aria-label={t('Close')}><X size={18} /></button></header>
         <div className="settings-body">
-          <div className="provider-tabs" role="group" aria-label="Provider">
+          {/* The language is a per-machine preference and applies the moment it
+              is chosen; the native delete dialogs and the preset prompts follow
+              it too, so a Chinese-only user is never handed English to edit. */}
+          <div className="language-field">
+            <span>{t('Language')}</span>
+            <div className="region-choice" role="group" aria-label={t('Language')}>
+              {LANGUAGES.map((entry) => (
+                <button key={entry.id} type="button" className={language === entry.id ? 'active' : ''} aria-pressed={language === entry.id} onClick={() => onLanguage(entry.id)}>
+                  <strong>{entry.native}</strong><small>{t(entry.label)}</small>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="provider-tabs" role="group" aria-label={t('Provider')}>
             {providers.map((entry) => (
               <button key={entry} type="button" className={provider === entry ? 'active' : ''} onClick={() => choose(entry)} aria-pressed={provider === entry}>
                 {PROVIDER_LABELS[entry]}{keyStatus[entry] ? <Check size={12} /> : null}
               </button>
             ))}
           </div>
-          <div className={`key-status ${connected ? 'connected' : ''}`}><span>{connected ? <Check size={16} /> : <CircleAlert size={16} />}</span><div><strong>{connected ? `${label} key securely stored` : `No ${label} key stored`}</strong><small>{connected ? 'Encrypted by the operating system and never exposed to the interface.' : 'Local tools still work without it.'}</small></div></div>
-          <label>{label} API key<input type="password" value={key} onChange={(event) => setKey(event.target.value)} placeholder={connected ? 'Enter a replacement key' : 'Paste key'} autoComplete="off" /></label>
+          <div className={`key-status ${connected ? 'connected' : ''}`}><span>{connected ? <Check size={16} /> : <CircleAlert size={16} />}</span><div><strong>{connected ? t('{provider} key securely stored', { provider: label }) : t('No {provider} key stored', { provider: label })}</strong><small>{connected ? t('Encrypted by the operating system and never exposed to the interface.') : t('Local tools still work without it.')}</small></div></div>
+          <label>{t('{provider} API key', { provider: label })}<input type="password" value={key} onChange={(event) => setKey(event.target.value)} placeholder={connected ? t('Enter a replacement key') : t('Paste key')} autoComplete="off" /></label>
           {provider === 'qwen' && (
             <>
               <div className="region-field">
-                <span>Model Studio region</span>
-                <div className="region-choice" role="group" aria-label="Model Studio region">
+                <span>{t('Model Studio region')}</span>
+                <div className="region-choice" role="group" aria-label={t('Model Studio region')}>
                   {QWEN_REGIONS.map((region) => (
                     <button key={region.id} type="button" className={qwenRegion === region.id ? 'active' : ''} aria-pressed={qwenRegion === region.id} onClick={() => { setQwenRegion(region.id); setTestResult(null) }}>
-                      <strong>{region.label}</strong><small>{region.detail}</small>
+                      <strong>{t(region.label)}</strong><small>{t(region.detail)}</small>
                     </button>
                   ))}
                 </div>
               </div>
-              <label>Workspace ID<input type="text" value={workspace} onChange={(event) => setWorkspace(event.target.value)} placeholder="ws-xxxxxxxx" autoComplete="off" spellCheck={false} /></label>
+              <label>{t('Workspace ID')}<input type="text" value={workspace} onChange={(event) => setWorkspace(event.target.value)} placeholder="ws-xxxxxxxx" autoComplete="off" spellCheck={false} /></label>
             </>
           )}
           <p>{provider === 'qwen'
-            ? `A Model Studio key from Alibaba Cloud. The two consoles are separate services and a key works with only one of them, so pick the region it was created in — ${qwenRegion === 'beijing' ? 'China (Beijing), reached directly from the mainland; a Singapore key will be rejected here' : 'International (Singapore); a Beijing key will be rejected here'}. Keys issued since the workspace upgrade begin sk-ws- and are only accepted by their own workspace address, so the Workspace ID above is required for those; an older sk- key can leave it blank.`
-            : 'The key is sent only to Google when you start a reconstruction. It is never written into the project folder or exported manifest.'}</p>
-          {connected && <button className="secondary-button full" onClick={testConnection} disabled={saving}>{saving ? <LoaderCircle className="spin" size={16} /> : <ScanSearch size={16} />} Test connection</button>}
+            ? t('A Model Studio key from Alibaba Cloud. The two consoles are separate services and a key works with only one of them, so pick the region it was created in — {region}. Keys issued since the workspace upgrade begin sk-ws- and are only accepted by their own workspace address, so the Workspace ID above is required for those; an older sk- key can leave it blank.', { region: qwenRegion === 'beijing' ? t('China (Beijing), reached directly from the mainland; a Singapore key will be rejected here') : t('International (Singapore); a Beijing key will be rejected here') })
+            : t('The key is sent only to Google when you start a reconstruction. It is never written into the project folder.')}</p>
+          {connected && <button className="secondary-button full" onClick={testConnection} disabled={saving}>{saving ? <LoaderCircle className="spin" size={16} /> : <ScanSearch size={16} />} {t('Test connection')}</button>}
           {testResult && <div className={`connection-result ${testResult.ok ? 'success' : 'failure'}`}>{testResult.ok ? <Check size={16} /> : <CircleAlert size={16} />}<span>{testResult.message}</span></div>}
           {error && <div className="inline-error">{error}</div>}
         </div>
-        <footer>{connected ? <button className="danger-text" onClick={clear}>Remove stored key</button> : <span />}<div><button className="text-button" onClick={onClose}>Cancel</button><button className="primary-button" onClick={save} disabled={!key.trim() || saving}>{saving ? <LoaderCircle className="spin" size={16} /> : <KeyRound size={16} />} Save securely</button></div></footer>
+        <footer>{connected ? <button className="danger-text" onClick={clear}>{t('Remove stored key')}</button> : <span />}<div><button className="text-button" onClick={onClose}>{t('Cancel')}</button><button className="primary-button" onClick={save} disabled={!key.trim() || saving}>{saving ? <LoaderCircle className="spin" size={16} /> : <KeyRound size={16} />} {t('Save securely')}</button></div></footer>
       </div>
     </div>
   )
@@ -2735,7 +2776,8 @@ function EmptyState({ icon: Icon, title, body }: { icon: typeof Copy; title: str
 }
 
 function BusyOverlay({ message }: { message: string }) {
-  return <div className="busy-overlay"><div><LoaderCircle className="spin" size={28} /><strong>{message}</strong><span>Replaced originals are kept in moodprep-originals</span></div></div>
+  const { t } = useLanguage()
+  return <div className="busy-overlay"><div><LoaderCircle className="spin" size={28} /><strong>{message}</strong><span>{t('Replaced originals are kept in moodprep-originals')}</span></div></div>
 }
 
 // The colour count is chosen by looking at colours, not at a number. Every
@@ -2749,6 +2791,7 @@ function PaletteCountPicker({ value, onChange, analysis, detecting, disabled }: 
   detecting: boolean
   disabled: boolean
 }) {
+  const { t } = useLanguage()
   const [open, setOpen] = useState(false)
   const anchor = useRef<HTMLButtonElement>(null)
   const [placement, setPlacement] = useState<{ left: number; top: number; up: boolean } | null>(null)
@@ -2777,23 +2820,23 @@ function PaletteCountPicker({ value, onChange, analysis, detecting, disabled }: 
   const candidates = analysis?.candidates ?? []
   const swatchesFor = (count: number) => candidates.slice(0, count)
   const shownCount = value === 'auto' ? (analysis?.recommendedColors ?? 0) : value
-  const label = value === 'auto' ? (detecting ? 'Auto · detecting…' : analysis ? `Auto · ${analysis.recommendedColors}` : 'Auto') : `${value} colours`
+  const label = value === 'auto' ? (detecting ? t('Auto · detecting…') : analysis ? t('Auto · {n}', { n: analysis.recommendedColors }) : t('Auto')) : t('{n} colours', { n: value })
   const swatches = (colours: string[]) => <span className="palette-swatches" aria-hidden="true">{colours.map((colour, index) => <i key={`${colour}-${index}`} style={{ background: colour }} />)}</span>
   return (
     <>
-      <button ref={anchor} type="button" className="palette-picker" disabled={disabled} onClick={(event) => { event.preventDefault(); event.stopPropagation(); toggle() }} aria-haspopup="listbox" aria-expanded={open} aria-label="Palette colours">
+      <button ref={anchor} type="button" className="palette-picker" disabled={disabled} onClick={(event) => { event.preventDefault(); event.stopPropagation(); toggle() }} aria-haspopup="listbox" aria-expanded={open} aria-label={t('Palette colours')}>
         {shownCount > 0 && candidates.length > 0 && swatches(swatchesFor(shownCount))}<span>{label}</span><ChevronDown size={12} />
       </button>
       {open && placement && createPortal(
         <div className="palette-menu" role="listbox" style={{ left: placement.left, top: placement.top, transform: `translate(-100%, ${placement.up ? '-100%' : '0'})` }}>
           <button type="button" role="option" aria-selected={value === 'auto'} className={value === 'auto' ? 'active' : ''} onClick={() => { onChange('auto'); setOpen(false) }}>
-            <span>{analysis ? `Auto · ${analysis.recommendedColors} detected` : 'Auto'}</span>{analysis && swatches(analysis.swatches)}
+            <span>{analysis ? t('Auto · {n} detected', { n: analysis.recommendedColors }) : t('Auto')}</span>{analysis && swatches(analysis.swatches)}
           </button>
           {Array.from({ length: 15 }, (_, index) => index + 2).map((count) => {
             const available = count <= candidates.length
             return (
-              <button key={count} type="button" role="option" aria-selected={value === count} className={value === count ? 'active' : ''} disabled={!available} title={available ? undefined : 'The analysis found fewer distinct colours than this'} onClick={() => { onChange(count); setOpen(false) }}>
-                <span>{count} colours</span>{available && swatches(swatchesFor(count))}
+              <button key={count} type="button" role="option" aria-selected={value === count} className={value === count ? 'active' : ''} disabled={!available} title={available ? undefined : t('The analysis found fewer distinct colours than this')} onClick={() => { onChange(count); setOpen(false) }}>
+                <span>{t('{n} colours', { n: count })}</span>{available && swatches(swatchesFor(count))}
               </button>
             )
           })}
@@ -2805,6 +2848,7 @@ function PaletteCountPicker({ value, onChange, analysis, detecting, disabled }: 
 }
 
 function Toast({ notice, onClose }: { notice: Notice; onClose: () => void }) {
+  const { t } = useLanguage()
   const [running, setRunning] = useState(false)
   const [hovering, setHovering] = useState(false)
   // An undoable notice stays up long enough to notice and reach, and hovering
@@ -2840,7 +2884,7 @@ function Toast({ notice, onClose }: { notice: Notice; onClose: () => void }) {
           {running ? <LoaderCircle className="spin" size={13} /> : <Undo2 size={13} />} {notice.action.label}
         </button>
       )}
-      <button onClick={onClose} aria-label="Dismiss"><X size={14} /></button>
+      <button onClick={onClose} aria-label={t('Dismiss')}><X size={14} /></button>
     </div>
   )
 }

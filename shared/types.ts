@@ -285,6 +285,16 @@ export type DuplicateDeletionResult = {
   failed: Array<{ path: string; reason: string }>
 }
 
+// The words a native delete dialog shows, supplied by the renderer so the
+// dialog follows the interface language. Absent means the English defaults.
+export type DeletionLabels = {
+  title: string
+  message: string
+  detail: string
+  cancel: string
+  confirm: string
+}
+
 export type ImageDeletionResult = {
   deleted: boolean
 }
@@ -331,8 +341,8 @@ export type MoodPrepApi = {
   clearApiKey: (provider: AiProvider) => Promise<void>
   testApiKey: (provider: AiProvider) => Promise<ConnectionResult>
   deleteDuplicates: (folder: string, groups: DuplicateDeletionGroup[]) => Promise<DuplicateDeletionResult>
-  deleteImage: (folder: string, imagePath: string) => Promise<ImageDeletionResult>
-  deleteImages: (folder: string, imagePaths: string[]) => Promise<BulkDeletionResult>
+  deleteImage: (folder: string, imagePath: string, labels?: DeletionLabels) => Promise<ImageDeletionResult>
+  deleteImages: (folder: string, imagePaths: string[], labels?: DeletionLabels) => Promise<BulkDeletionResult>
   exportSelection: (folder: string, entries: ExportEntry[]) => Promise<ExportResult>
   revealPath: (path: string) => Promise<void>
   copyText: (text: string) => Promise<void>

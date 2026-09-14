@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs'
 import { createHash } from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { AuthoredPromptRequest, DuplicateDeletionGroup, ExportEntry, FillRequest, GeminiRequest, ProcessRequest, ProjectState } from '../shared/types'
+import type { AuthoredPromptRequest, DeletionLabels, DuplicateDeletionGroup, ExportEntry, FillRequest, GeminiRequest, ProcessRequest, ProjectState } from '../shared/types'
 import { analyzeImageQuality, authorPrompt, commitProcessedImage, revertCommittedImage, convertSvgs, detectBackgroundColor, detectDominantColors, detectPalette, detectRotation, duplicateImage, fillArea, exportSelection, aiEdit, loadEditorPreview, loadProject, processImage, prunePreviews, refreshImage, samplePixelColor, saveProject, scanFolder, testConnection } from './processor'
 import { AI_MODELS, DEFAULT_QWEN_REGION, modelById, normaliseQwenWorkspace, QWEN_REGIONS, type AiProvider, type QwenRegion } from '../shared/models'
 
@@ -165,15 +165,17 @@ app.whenReady().then(async () => {
     }
     return { deletedCount, failed }
   })
-  ipcMain.handle('delete-image', async (event, folder: string, imagePath: string) => {
+  ipcMain.handle('delete-image', async (event, folder: string, imagePath: string, labels?: DeletionLabels) => {
     const resolved = assertInsideFolder(folder, imagePath)
     const owner = BrowserWindow.fromWebContents(event.sender)
+    // The renderer supplies the wording in its own language; these are the
+    // English defaults for a caller that does not.
     const options = {
       type: 'warning' as const,
-      title: 'Delete image from folder?',
-      message: `Move ${path.basename(resolved)} to Trash?`,
-      detail: 'The image will be removed from this collection. Existing reference copies in moodprep-originals will be kept.',
-      buttons: ['Cancel', 'Move to Trash'],
+      title: labels?.title ?? 'Delete image from folder?',
+      message: labels?.message ?? `Move ${path.basename(resolved)} to Trash?`,
+      detail: labels?.detail ?? 'The image will be removed from this collection. Existing reference copies in moodprep-originals will be kept.',
+      buttons: [labels?.cancel ?? 'Cancel', labels?.confirm ?? 'Move to Trash'],
       defaultId: 0,
       cancelId: 0,
       noLink: true,
@@ -185,7 +187,7 @@ app.whenReady().then(async () => {
   })
   // Deleting a selection asks once for the whole batch. Looping the single-image
   // handler would stack one native dialog per file, which is not a bulk action.
-  ipcMain.handle('delete-images', async (event, folder: string, imagePaths: string[]) => {
+  ipcMain.handle('delete-images', async (event, folder: string, imagePaths: string[], labels?: DeletionLabels) => {
     const targets = [...new Set(imagePaths)]
     if (targets.length === 0) return { deletedCount: 0, failed: [] }
     const owner = BrowserWindow.fromWebContents(event.sender)
@@ -193,10 +195,10 @@ app.whenReady().then(async () => {
     const listed = names.slice(0, 8).join('\n')
     const options = {
       type: 'warning' as const,
-      title: 'Delete images from folder?',
-      message: targets.length === 1 ? `Move ${names[0]} to Trash?` : `Move ${targets.length} images to Trash?`,
-      detail: `${listed}${names.length > 8 ? `\n…and ${names.length - 8} more` : ''}\n\nThey will be removed from this collection. Existing reference copies in moodprep-originals will be kept.`,
-      buttons: ['Cancel', targets.length === 1 ? 'Move to Trash' : `Move ${targets.length} to Trash`],
+      title: labels?.title ?? 'Delete images from folder?',
+      message: labels?.message ?? (targets.length === 1 ? `Move ${names[0]} to Trash?` : `Move ${targets.length} images to Trash?`),
+      detail: labels?.detail ?? `${listed}${names.length > 8 ? `\n…and ${names.length - 8} more` : ''}\n\nThey will be removed from this collection. Existing reference copies in moodprep-originals will be kept.`,
+      buttons: [labels?.cancel ?? 'Cancel', labels?.confirm ?? (targets.length === 1 ? 'Move to Trash' : `Move ${targets.length} to Trash`)],
       defaultId: 0,
       cancelId: 0,
       noLink: true,

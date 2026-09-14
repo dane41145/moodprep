@@ -1,4 +1,7 @@
 import type { CropInsets, ImageRecord, ImageSize, IssueType } from '../shared/types'
+import { backdropById } from '../shared/models'
+import type { Language } from './i18n'
+import { BACKDROP_PHRASES_ZH, buildPresetPromptZh, buildPromptAuthorInstructionZh } from './prompts.zh'
 
 export type DuplicateGroup = {
   id: string
@@ -136,7 +139,19 @@ const fidelityInstruction = 'Preserve the exact wording, spelling, letter shapes
 // so naming a backdrop there would contradict the instruction it exists for.
 const backdropInstruction = (phrase: string | null) => phrase === null ? '' : `Surround: fill every part of the canvas that is not the artwork itself with ${phrase}, absolutely uniform, with no gradient, vignette, texture, shadow, glow, noise, lighting variation, or colour drift of any kind. Do not add a drop shadow, rim light, halo, outline, keyline, or seam between the artwork and that surround.`
 
-export function buildGeminiPresetPrompt(preset: GeminiPresetId, issues: IssueType[], backdrop: string | null = 'pure black, #000000') {
+// The surround phrase the prompt names for a backdrop, in the prompt's own
+// language. None is null in both: the surround paragraph is dropped entirely.
+export function backdropPhrase(backdropId: string, language: Language = 'en'): string | null {
+  if (language === 'zh') return BACKDROP_PHRASES_ZH[backdropId] ?? null
+  return backdropById(backdropId).phrase
+}
+
+// The prompt is written in the interface language, so a user who reads only
+// Chinese gets a prompt they can read and edit. Both providers understand
+// either; the Chinese texts in src/prompts.zh.ts mirror the English structure
+// and carry the same load-bearing sentences.
+export function buildGeminiPresetPrompt(preset: GeminiPresetId, issues: IssueType[], backdrop: string | null = 'pure black, #000000', language: Language = 'en') {
+  if (language === 'zh') return buildPresetPromptZh(preset, issues, backdrop).trim()
   // Omitting the surround paragraph leaves the gap it used to fill, so the
   // seams between the remaining paragraphs are closed up here.
   return buildPresetPrompt(preset, issues, backdrop).replace(/ {2,}/g, ' ').trim()
@@ -217,7 +232,8 @@ ${instructions} ${fidelityInstruction} Preserve the original wording, spelling, 
 // T-shirt is what a person means, but an image model told about a T-shirt draws
 // a T-shirt, so the garment is described here — to the model writing the words
 // — and forbidden there, in the words it writes.
-export function buildPromptAuthorInstruction(issues: IssueType[], backdrop: string | null = null) {
+export function buildPromptAuthorInstruction(issues: IssueType[], backdrop: string | null = null, language: Language = 'en') {
+  if (language === 'zh') return buildPromptAuthorInstructionZh(issues, backdrop)
   const flagged = issues.length > 0
     ? `The person preparing this image has already flagged: ${issues.map(humanIssue).join(', ')}. Cover those where you can see them, and do not assert a fault that is not visible to you. `
     : ''
@@ -247,12 +263,15 @@ export function cleanAuthoredPrompt(text: string) {
   if (fenced) cleaned = fenced[1].trim()
   cleaned = cleaned.replace(/^\**\s*(?:here(?:'|\u2019)?s|here is|here are)?\s*(?:the\s+)?(?:suggested\s+|custom\s+|bespoke\s+)?prompt\b[^:\n]{0,40}:\**\s*/i, '')
   cleaned = cleaned.replace(/^\s*(?:\*\*)?here(?:'|\u2019)?s[^:\n]{0,80}:\s*/i, '')
+  // A model answering in Chinese introduces itself the same way.
+  cleaned = cleaned.replace(/^\**\s*(?:以下是|这是|下面是)?\s*(?:为这张图(?:片|像)?(?:写|生成)的)?\s*(?:提示词|指令|提示)[^：:\n]{0,20}[：:]\**\s*/, '')
   if (/^["\u201c][\s\S]*["\u201d]$/.test(cleaned)) cleaned = cleaned.slice(1, -1).trim()
+  if (/^[「『][\s\S]*[」』]$/.test(cleaned)) cleaned = cleaned.slice(1, -1).trim()
   return cleaned.replace(/\n{3,}/g, '\n\n').trim()
 }
 
-export function buildGeminiPrompt(issues: IssueType[]) {
-  return buildGeminiPresetPrompt('standard', issues)
+export function buildGeminiPrompt(issues: IssueType[], language: Language = 'en') {
+  return buildGeminiPresetPrompt('standard', issues, language === 'zh' ? BACKDROP_PHRASES_ZH.black : 'pure black, #000000', language)
 }
 
 // Bulk tagging over a mixed selection.
@@ -356,18 +375,18 @@ export function sortImages(images: ImageRecord[], key: SortKey, direction: SortD
   })
 }
 
-export function formatTimestamp(value: string | undefined) {
+export function formatTimestamp(value: string | undefined, locale?: string) {
   const time = timestampValue(value)
   if (!time) return 'Date unknown'
-  return new Date(time).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+  return new Date(time).toLocaleDateString(locale, { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
 // The card's secondary line shows whatever the collection is sorted by, so the
 // ordering on screen is always readable rather than implied.
-export function describeSortValue(image: ImageRecord, key: SortKey) {
+export function describeSortValue(image: ImageRecord, key: SortKey, locale?: string) {
   switch (key) {
-    case 'added': return formatTimestamp(image.addedAt)
-    case 'modified': return formatTimestamp(image.modifiedAt)
+    case 'added': return formatTimestamp(image.addedAt, locale)
+    case 'modified': return formatTimestamp(image.modifiedAt, locale)
     case 'size': return formatBytes(image.bytes)
     case 'type': return image.extension.toUpperCase()
     default: return `${image.width} × ${image.height}`
@@ -638,6 +657,20 @@ export function appendRevision<T>(revisions: T[], index: number, revision: T) {
 // `shared/quality.ts`, shared with the process that computes the score. They
 // are re-exported here because this is where the renderer looks for them.
 export { canAcceptQuality, QUALITY_BANDS, QUALITY_RECOMMENDED_SCORE, qualityLabel, type QualityLabel } from '../shared/quality'
+
+// The quality reasons are written by the processor as English data strings
+// and carried in the scan cache, so the renderer translates the known shapes
+// rather than the processor learning about languages. An unknown reason comes
+// back as it is.
+export function translateQualityReason(reason: string, t: (key: string, vars?: Record<string, string | number>) => string) {
+  const shortEdge = reason.match(/^Short edge is only (\d+) px$/)
+  if (shortEdge) return t('Short edge is only {n} px', { n: shortEdge[1] })
+  const megapixels = reason.match(/^([\d.]+) megapixels$/)
+  if (megapixels) return t('{n} megapixels', { n: megapixels[1] })
+  const crisp = reason.match(/^([\d.]+) MP with crisp edges and clean colour$/)
+  if (crisp) return t('{n} MP with crisp edges and clean colour', { n: crisp[1] })
+  return t(reason)
+}
 
 // Accepts what people actually paste or type into a colour field: with or
 // without the leading hash, upper or lower case, 3-digit shorthand or 6-digit.
