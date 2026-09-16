@@ -1,7 +1,7 @@
 {
   "name": "moodprep",
   "private": true,
-  "version": "0.1.41",
+  "version": "0.2.0",
   "type": "module",
   "description": "Local-first image preparation workbench for Midjourney moodboards",
   "main": "dist-electron/main.js",

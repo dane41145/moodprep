@@ -1,5 +1,7 @@
 # MoodPrep
 
+[中文说明](README.zh-CN.md)
+
 MoodPrep is a local-first desktop workbench for preparing image collections before adding them to a Midjourney moodboard. It scans and reviews source folders without modifying their contents.
 
 ## What it does
